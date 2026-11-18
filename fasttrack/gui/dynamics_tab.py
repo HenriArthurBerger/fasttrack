@@ -424,7 +424,7 @@ class DynamicsPanel(QWidget):
         glob = QFormLayout()
         self.device = QComboBox()
         self.device.setEditable(True)
-        self.device.addItems(["auto", "cuda:0", "cuda:1", "cpu"])
+        self.device.addItems(["auto", "cuda:0", "cuda:1", "mps", "cpu"])
         glob.addRow("Device", self.device)
         self.interval = _spin(0, 10000, 3, 1, "from frames per hour", " min")
         self.interval.valueChanged.connect(self._show_interval)

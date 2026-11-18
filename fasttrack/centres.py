@@ -38,6 +38,7 @@ import numpy as np
 import torch
 from scipy import ndimage
 
+from .device import resolve as resolve_device
 from .experiment import pipeline_config
 from .io import layout, store
 from .track.measure import S
@@ -448,7 +449,7 @@ def train_from_labels(exp: dict, on_event=lambda e: None, timestacks: dict | Non
     rows = centre_rows(read_labels(exp))
     if len(rows) < 10:
         raise ValueError(f"Label at least 10 patches before training ({len(rows)} so far).")
-    device = exp["pipeline"]["device"]
+    device = resolve_device(exp["pipeline"]["device"])
     margin = int(c["margin"])
     images, inside, points = build_patches(exp, rows, timestacks, device, on_event)
     steps, seed = int(c["train_steps"]), int(exp["labelling"]["seed"])
@@ -504,7 +505,7 @@ def cross_check(exp: dict, folds: int = 5, on_event=lambda e: None, timestacks: 
     rows = centre_rows(read_labels(exp))
     if len(rows) < max(folds, 5):
         raise ValueError(f"Label at least {max(folds, 5)} patches before checking them ({len(rows)} so far).")
-    device = exp["pipeline"]["device"]
+    device = resolve_device(exp["pipeline"]["device"])
     margin, gate, steps, seed = int(c["margin"]), float(c["match_distance"]), int(c["train_steps"]), int(exp["labelling"]["seed"])
     if threshold is None:
         report = read_report(exp)

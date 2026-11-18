@@ -433,7 +433,8 @@ class MainWindow(QMainWindow):
         from ..synthetic.generate import DENSE_PRESET, POPULATED_PRESET
         well_list = [w.strip().upper() for w in wells.text().split(",") if w.strip()]
         updates = {"frames": frames.value(), **[{}, POPULATED_PRESET, DENSE_PRESET][preset.currentIndex()]}
-        device = self.exp["pipeline"]["device"]
+        from ..device import resolve as resolve_device
+        device = resolve_device(self.exp["pipeline"]["device"])
 
         def job(on_event, stop):
             from ..synthetic.write import write_experiment
@@ -460,6 +461,10 @@ class MainWindow(QMainWindow):
 def main(path: str | None = None) -> None:
     app = QApplication(sys.argv[:1])
     app.setApplicationName("FastTrack")
+    app.setDesktopFileName("fasttrack")   # Linux: matches fasttrack.desktop, so the dock shows the icon
+    from pathlib import Path
+    from PySide6.QtGui import QIcon
+    app.setWindowIcon(QIcon(str(Path(__file__).parent / "assets" / "icon.png")))
     theme.apply(app)
     window = MainWindow(path)
     window.show()

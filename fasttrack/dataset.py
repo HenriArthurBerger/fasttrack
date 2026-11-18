@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from . import centres, events
+from .device import resolve as resolve_device
 
 
 # ---------------------------------------------------------------------- the dataset
@@ -125,7 +126,7 @@ def train_states(exp: dict, on_event=lambda e: None, timestacks: dict | None = N
     """Train the state classifier on every labelled point and save it where Classify reads it. Returns the report."""
     lab = exp["labelling"]
     cells, classes, x, y = _state_data(exp, timestacks, on_event)
-    device = exp["pipeline"]["device"]
+    device = resolve_device(exp["pipeline"]["device"])
     net, report = events.train_classifier(x, y, classes, int(lab["train_steps"]), device, seed=int(lab["seed"]),
                                           on_step=lambda s, l: on_event({"kind": "train", "phase": "states", "step": s,
                                                                          "steps": int(lab["train_steps"]), "loss": l}))
@@ -174,7 +175,7 @@ def check_labels(exp: dict, on_event=lambda e: None, timestacks: dict | None = N
     try:
         lab = exp["labelling"]
         cells, classes, x, y = _state_data(exp, timestacks, on_event)
-        device = exp["pipeline"]["device"]
+        device = resolve_device(exp["pipeline"]["device"])
         fold = np.random.default_rng(int(lab["seed"])).permutation(len(y)) % folds
         prob = np.zeros((len(y), len(classes)), np.float32)
         for k in range(folds):

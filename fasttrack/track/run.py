@@ -20,6 +20,7 @@ import numpy as np
 import torch
 
 from ..config import save_config
+from ..device import resolve as resolve_device
 from ..io import layout, store
 from .batch import process_batch
 from .linking import link_tracks, trace_index
@@ -108,7 +109,7 @@ def process_timestack(timestack: dict, cfg: dict, on_event: Event = _noop, stop:
 
     `reader(start, stop)` returns (T,C,X,Y) frames. By default it reads the timestack's TIFFs.
     """
-    device = torch.device(cfg["device"])
+    device = torch.device(resolve_device(cfg["device"]))
     frames = timestack["frames"]
     stop = stop or threading.Event()
     plan = {"size": int(cfg["batch_size"]), "auto_stopped": False}
@@ -563,7 +564,7 @@ def run_quality_check(exp: dict, timestacks: dict, on_event: Event = _noop, stop
         flag_files(exp, candidates, on_event)
         return {}, {}
     on_event({"kind": "quality_start", "positions": len(candidates)})
-    results, features = check_positions(candidates, q, exp["pipeline"]["device"], names, on_event, stop, int(exp["files"]["io_threads"]))
+    results, features = check_positions(candidates, q, resolve_device(exp["pipeline"]["device"]), names, on_event, stop, int(exp["files"]["io_threads"]))
     from ..quality import file_flags
     q["flagged"] = {**{k: r["reason"] or "unusual tiles" for k, r in results.items() if r["flagged"]}, **file_flags({k: candidates[k] for k in results}, q)}
     for k, reason in q["flagged"].items():

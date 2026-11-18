@@ -1,0 +1,49 @@
+# Installs FastTrack with the one-line installers on Linux, macOS and Windows (CPU PyTorch: the runners
+# have no GPU), then runs the device, experiment, GUI and labelling tests against the installed copy, not the
+# checkout. The full suite is slow without a GPU; run it locally.
+name: install
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      FASTTRACK_SOURCE: ${{ github.workspace }}
+      FASTTRACK_TORCH: cpu
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Qt libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+
+      - name: Install (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: bash installer/install.sh
+
+      - name: Install (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./installer/install.ps1
+
+      - name: Tests against the installed app
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then PY="$LOCALAPPDATA/FastTrack/env/Scripts/python.exe"
+          elif [ "$RUNNER_OS" = "macOS" ]; then PY="$HOME/Library/Application Support/FastTrack/env/bin/python"
+          else PY="$HOME/.local/share/fasttrack/env/bin/python"; fi
+          ~/.local/bin/uv pip install --python "$PY" pytest || uv pip install --python "$PY" pytest
+          cp -r tests "$RUNNER_TEMP/tests" && cd "$RUNNER_TEMP"
+          "$PY" -I -c "import fasttrack, sys; print(fasttrack.__file__); assert 'site-packages' in fasttrack.__file__"
+          "$PY" -I -m pytest -q -p no:cacheprovider tests/test_device.py tests/test_experiment.py tests/test_pipeline.py tests/test_centres.py

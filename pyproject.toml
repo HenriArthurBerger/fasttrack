@@ -8,19 +8,31 @@ version = "0.1.0"
 description = "GPU-native segmentation, measurement and lineage tracking for terabyte-scale timelapse fluorescence microscopy."
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["torch>=2.2", "numpy", "scipy", "tifffile", "pillow", "h5py", "pyyaml"]
+readme = "README.md"
+authors = [{ name = "Henri Berger" }]
+dependencies = ["torch>=2.2", "torchvision", "numpy", "scipy", "tifffile", "pillow", "h5py", "pyyaml", "matplotlib"]
 
 [project.optional-dependencies]
-gui = ["PySide6>=6.6"]
-learned = ["torchvision"]
-analysis = ["matplotlib", "pandas"]
+gui = ["PySide6-Essentials>=6.6"]   # QtCore, QtGui, QtWidgets only; the full PySide6 also works
+all = ["fasttrack[gui]"]
+learned = []     # torchvision and matplotlib are now always installed; kept so older install lines still work
+analysis = []
 dev = ["pytest"]
 
 [project.scripts]
 fasttrack = "fasttrack.cli:main"
 
+[project.gui-scripts]
+fasttrack-gui = "fasttrack.cli:gui"
+
+[project.urls]
+Homepage = "https://github.com/HenriArthurBerger/fasttrack"
+
 [tool.setuptools.packages.find]
 include = ["fasttrack*"]
+
+[tool.setuptools.package-data]
+"fasttrack.gui" = ["assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

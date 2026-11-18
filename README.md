@@ -11,10 +11,41 @@ are mostly separate. It is not a general segmenter, and very dense fields are ou
 The core is the original notebook pipeline, repackaged: quadratic background, LoG mask, pseudo distance peaks,
 local labels, `measure_subsections`, FFT shift correction. [`docs/AUDIT.md`](docs/AUDIT.md) lists each fix.
 
-## Quick start
+## Install
+
+One line installs the app, with its own Python and the PyTorch build that fits the machine (CUDA with an NVIDIA
+GPU, CPU-only otherwise, Apple GPU support on a Mac), and adds FastTrack to your applications menu. Run it again
+to update.
+
+**macOS and Linux** (in a terminal):
 
 ```bash
-pip install -e ".[gui,learned,analysis,dev]"
+curl -LsSf https://raw.githubusercontent.com/HenriArthurBerger/fasttrack/main/installer/install.sh | bash
+```
+
+**Windows** (in PowerShell):
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/HenriArthurBerger/fasttrack/main/installer/install.ps1 | iex"
+```
+
+The first install downloads 1–3 GB (mostly PyTorch). Tracking a full plate needs an NVIDIA GPU; without one
+FastTrack runs on the CPU, which is fine for looking at results, figures and labelling, but slow for tracking.
+Options (a specific version, forcing the CPU build, uninstalling) are listed at the top of
+[`installer/install.sh`](installer/install.sh) and [`installer/install.ps1`](installer/install.ps1).
+
+**Into your own Python environment** instead:
+
+```bash
+pip install "fasttrack[gui] @ git+https://github.com/HenriArthurBerger/fasttrack"
+```
+
+## Quick start
+
+For development, from a checkout:
+
+```bash
+pip install -e ".[gui,dev]"
 ```
 
 ```bash

@@ -7,8 +7,11 @@ All commands run from the `refactor/` folder.
 
 ## 1. Install and check
 
+To use the app, install it with the one-line installer in the [README](../README.md#install). To work on the
+code, from a checkout:
+
 ```bash
-pip install -e ".[gui,learned,analysis,dev]"
+pip install -e ".[gui,dev]"
 ```
 
 ```bash

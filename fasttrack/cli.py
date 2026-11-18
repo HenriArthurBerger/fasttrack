@@ -1,6 +1,7 @@
 """Command line. Every setting and folder lives in the experiment file; the command line only names it.
 
     fasttrack gui [experiment.yaml]      open the app (optionally with a file)
+    fasttrack version                    the FastTrack and torch versions, and the GPU it can use
     fasttrack run experiment.yaml        track from raw data, then draw the figures
     fasttrack figures experiment.yaml    redraw the figures from existing results
     fasttrack dynamics experiment.yaml [fit name ...]
@@ -54,6 +55,11 @@ def _print_event(event: dict) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = sys.argv[1:] if argv is None else argv
+    if args and args[0] in ("version", "--version", "-V"):
+        from . import __version__
+        from .device import describe
+        print(f"FastTrack {__version__} · Python {sys.version.split()[0]} · {describe()}")
+        return
     if not args or args[0] in ("-h", "--help", "help") or args[0] not in ("gui", "run", "figures", "dynamics", "fates", "export"):
         print(USAGE)
         sys.exit(0 if args and args[0] in ("-h", "--help", "help") else 2)
@@ -146,3 +152,9 @@ def _fates(path: str, names: list[str]) -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def gui() -> None:
+    """The `fasttrack-gui` launcher (no console window on Windows): open the app, optionally with a file."""
+    from .gui.app import main as gui_main
+    gui_main(sys.argv[1] if len(sys.argv) > 1 else None)

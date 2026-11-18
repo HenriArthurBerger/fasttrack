@@ -25,6 +25,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from .device import resolve as resolve_device
 from .experiment import loaded_channels, pipeline_config
 from .io import layout, store
 from .track.measure import S
@@ -341,7 +342,7 @@ def train_from_labels(exp: dict, on_event=lambda e: None, timestacks: dict | Non
             on_event({"kind": "crops", "done": i + 1, "total": len(rows)})
     finally:
         reader.close()
-    device = exp["pipeline"]["device"]
+    device = resolve_device(exp["pipeline"]["device"])
     net, report = train_classifier(np.stack(xs), np.array(ys), classes, int(lab["train_steps"]), device, seed=int(lab["seed"]),
                                    on_step=lambda s, l: on_event({"kind": "train", "step": s, "loss": l}))
     settings = {k: lab[k] for k in ("window", "crop", "channels")}
@@ -353,7 +354,7 @@ def train_from_labels(exp: dict, on_event=lambda e: None, timestacks: dict | Non
 def classify_positions(exp: dict, on_event=lambda e: None, stop=None, timestacks: dict | None = None,
                        sources: tuple = ("track_end", "track_start", "division")) -> dict[str, int]:
     """Classify every candidate of every tracked position; write Events/<id>.csv. Returns candidates per position."""
-    device = exp["pipeline"]["device"]
+    device = resolve_device(exp["pipeline"]["device"])
     net, blob = load_model(model_path(exp), device)
     classes = blob["report"]["classes"]
     settings = blob["settings"]

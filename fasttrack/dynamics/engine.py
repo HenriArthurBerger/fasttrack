@@ -30,13 +30,9 @@ FRAME_MINUTES = 6.0   # starting values are per minute; with no frame interval t
 
 
 def pick_device(name: str = "auto") -> torch.device:
-    """'auto': the CUDA device with the most free memory, else CPU."""
-    if name and name != "auto":
-        return torch.device(name)
-    if not torch.cuda.is_available():
-        return torch.device("cpu")
-    free = [torch.cuda.mem_get_info(i)[0] for i in range(torch.cuda.device_count())]
-    return torch.device(f"cuda:{int(np.argmax(free))}")
+    """'auto': the CUDA device with the most free memory, else CPU (fasttrack/device.py)."""
+    from ..device import resolve
+    return torch.device(resolve(name))
 
 
 # ---------------------------------------------------------------------- parameters

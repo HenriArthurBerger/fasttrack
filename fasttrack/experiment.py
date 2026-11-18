@@ -447,7 +447,10 @@ def pipeline_config(exp: dict) -> dict:
         "max_frames": 0,
         "io_threads": int(files["io_threads"]),
     }
-    return merge(PIPELINE_DEFAULTS, {**copy.deepcopy(exp["pipeline"]), "data": data, "nuclear_channel": nuclear[0] if nuclear else 0})
+    from .device import resolve as resolve_device
+    cfg = merge(PIPELINE_DEFAULTS, {**copy.deepcopy(exp["pipeline"]), "data": data, "nuclear_channel": nuclear[0] if nuclear else 0})
+    cfg["device"] = resolve_device(cfg["device"])
+    return cfg
 
 
 def validate(exp: dict) -> list[str]:

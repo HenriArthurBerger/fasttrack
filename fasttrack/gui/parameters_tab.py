@@ -30,7 +30,7 @@ TIPS = {
                                   "Such cells nearly always do not express the reporter (on the KTR plate about 1 in 5), and "
                                   "their ratio is background over background.",
     ("measure", "cyto_min_pixels"): "A cell with fewer ring pixels left gets NaN cytoplasm values instead of a noisy ratio.",
-    (None, "device"): "cuda:0 for the first GPU, cpu to run without one (slow).",
+    (None, "device"): "cuda:0 for the first GPU, auto for the GPU with the most free memory, mps for an Apple GPU, cpu to run without one (slow). A GPU this machine lacks falls back to the CPU.",
 }
 
 
