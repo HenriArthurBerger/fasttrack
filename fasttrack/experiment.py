@@ -120,8 +120,13 @@ QUALITY_DEFAULTS = {
     "keep": [],                  # flagged positions to track anyway (manual override)
 }
 
+OLD_CATEGORIES = ["neutral", "division", "death", "abnormal"]   # before division was split into mitosis and daughter
+
 LABELLING_DEFAULTS = {
-    "categories": ["neutral", "division", "death", "abnormal"],
+    # cell states, keys 1-9 in this order; the first is the default. mitosis: rounding up and dividing, before the
+    # split (often odd-looking for a few frames); daughter: a new cell in the first frames after the split;
+    # touching: nuclei touching or overlapping, where centres are hardest
+    "categories": ["neutral", "mitosis", "daughter", "touching", "death", "abnormal"],
     "window": 2,                 # frames shown and used before and after the event frame
     "crop": 48,                  # px, side of the square crop around the cell
     "channels": [],              # channel names in the crops; empty = the nuclear channel
@@ -137,7 +142,7 @@ LABELLING_DEFAULTS = {
         "count_window": 5,       # frames; a frame is compared with the median of this many around it
         "min_change": 0.5,       # smallest local count change that makes a candidate (1 = one nucleus)
         "sample": {"count_change": 0.45, "random": 0.2, "track_end": 0.15, "track_start": 0.05, "division": 0.15},
-        "context": 3,            # frames shown before and after the labelled frame (at least 3), to tell odd shapes from doubles
+        "context": 7,            # frames shown before and after the labelled frame (3-15), to tell odd shapes from doubles
         "train_steps": 1500,
         "match_distance": 6.0,   # px; a found centre this close to a clicked one counts as the same nucleus
         "labels_file": "Labels/centres.json",
@@ -352,6 +357,8 @@ def normalise(exp: dict | None) -> dict:
     out["figures"]["exports"] = _fill_list(out["figures"]["exports"], EXPORT_DEFAULT)
     for export in out["figures"]["exports"]:
         export["panels"] = _fill_list(export["panels"], PANEL_DEFAULT)
+    if out["labelling"]["categories"] == OLD_CATEGORIES:      # the earlier default list: take the new one
+        out["labelling"]["categories"] = list(LABELLING_DEFAULTS["categories"])
     out["analysis"]["readouts"] = _fill_list(out["analysis"]["readouts"], READOUT_DEFAULT)
     out["analysis"]["dynamics"]["fits"] = _fill_list(out["analysis"]["dynamics"]["fits"], FIT_DEFAULT)
     out["analysis"]["features"]["list"] = _fill_list(out["analysis"]["features"]["list"], FEATURE_DEFAULT)

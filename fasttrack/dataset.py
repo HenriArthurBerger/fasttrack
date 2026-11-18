@@ -1,7 +1,7 @@
 """One labelled dataset for two models: nucleus centres (the seed finder) and cell states (the classifier).
 
 You label patches in Label cells: every nucleus centred in the box gets one point, and every point a state
-(labelling.categories, e.g. neutral, division, death, abnormal; the first is the default). The same file,
+(labelling.categories, e.g. neutral, mitosis, daughter, touching, death, abnormal; the first is the default). The same file,
 Labels/centres.json, trains both models:
 
   - the seed finder (fasttrack/centres.py) on the points of every full patch;
@@ -50,7 +50,7 @@ def migrate_events(exp: dict, rows: list[dict]) -> tuple[list[dict], int]:
             continue
         rows.append({"position": r["position"], "t": int(r["t"]), "x0": int(round(x - size / 2)), "y0": int(round(y - size / 2)),
                      "size": size, "source": "events_csv", "change": 0.0, "points": [[round(x, 1), round(y, 1)]],
-                     "states": [r["category"]], "tracked": [], "state_only": True, "track": int(r["track"]),
+                     "states": [centres.LEGACY_STATES.get(r["category"], r["category"])], "tracked": [], "state_only": True, "track": int(r["track"]),
                      "labelled": r.get("labelled", "")})
         added += 1
     centres.write_labels(exp, rows)

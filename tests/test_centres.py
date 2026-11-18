@@ -125,36 +125,36 @@ def test_centres_tab_edits_and_saves(tmp_path, device):
     tab.back()
     assert tab.current["t"] == obs["t"] and tab.points == [[obs["x0"] + 30.0, obs["y0"] + 31.0]]
     assert centres.read_labels({**exp, "labelling": tab.collect()}) == []
-    # at least 3 frames each way, flipped with the film strip; other frames are view only
-    assert tab.k >= 3 and len(tab.thumbs) == 2 * tab.k + 1
+    # 7 frames each way by default, flipped with the film strip; other frames are view only
+    assert tab.k == 7 and len(tab.thumbs) == 2 * tab.k + 1
     tab.view_frame(-2)
     tab._clicked(m + 40.0, m + 40.0)                    # brings the labelled frame back instead of editing
     assert tab.view_dt == 0 and len(tab.points) == 1
     # number keys: state for the point under the crosshair, or a new point with that state
     tab.hover = (m + 30.5, m + 31.0)
     tab.state_key(2)
-    assert tab.states == ["division"]
+    assert tab.states == ["mitosis"]
     tab.hover = (m + 50.0, m + 10.0)
     tab.state_key(3)
-    assert tab.points[-1] == [obs["x0"] + 50.0, obs["y0"] + 10.0] and tab.states[-1] == "death"
+    assert tab.points[-1] == [obs["x0"] + 50.0, obs["y0"] + 10.0] and tab.states[-1] == "daughter"
     tab.undo_click()
     assert len(tab.points) == 1
     tab.save()
     saved = centres.read_labels({**exp, "labelling": tab.collect()})
-    assert saved[0]["states"] == ["division"]
+    assert saved[0]["states"] == ["mitosis"]
     # dataset page lists it, in both views; double-click opens it for correction, Enter goes back
     tab.pages.setCurrentIndex(1)
     assert tab.ds_list.count() == 1
     tab.ds_mode.setCurrentIndex(1)
-    assert tab.ds_list.count() == 1 and tab.ds_list.item(0).text() == "division"
+    assert tab.ds_list.count() == 1 and tab.ds_list.item(0).text() == "mitosis"
     tab.open_row(tab.ds_list.item(0).data(Qt.ItemDataRole.UserRole))
-    assert tab.pages.currentIndex() == 0 and tab.states == ["division"]
+    assert tab.pages.currentIndex() == 0 and tab.states == ["mitosis"]
     tab.save()
     assert tab.pages.currentIndex() == 1
     # review page without a check says so; with one, a disagreement opens with the model's centres
     tab.pages.setCurrentIndex(2)
     assert "No check yet" in tab.rv_status.text()
-    tab.review = {"made": "2000-01-01 00:00:00", "folds": 2, "errors": {}, "classes": ["neutral", "division"],
+    tab.review = {"made": "2000-01-01 00:00:00", "folds": 2, "errors": {}, "classes": ["neutral", "mitosis"],
                   "patches": [{"key": [obs["position"], obs["t"], obs["x0"], obs["y0"]], "model_points": [], "matched": 0, "missed": 1, "extra": 0}],
                   "cells": []}
     tab.rv_hide.setChecked(False)

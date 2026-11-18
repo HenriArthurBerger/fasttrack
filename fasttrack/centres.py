@@ -44,6 +44,7 @@ from .io import layout, store
 from .track.measure import S
 
 SOURCES = ["count_change", "random", "track_end", "track_start", "division"]
+LEGACY_STATES = {"division": "mitosis"}   # states renamed since: read as the new name
 EVENT_SOURCES = ("track_end", "track_start", "division")
 SOURCE_TEXT = {"count_change": "a local change in cell count", "random": "a random cell",
                "track_end": "a track that ends (the cell in the centre)", "track_start": "a track that starts (the cell in the centre)",
@@ -253,9 +254,10 @@ class NuclearReader:
         self.pool.shutdown(wait=False)
 
 
-def cut(frame: np.ndarray, x0: int, y0: int, size: int, margin: int) -> np.ndarray:
-    """The box plus a margin on every side; reflected where it runs off the image."""
-    padded = np.pad(frame, margin, mode="reflect") if margin else frame
+def cut(frame: np.ndarray, x0: int, y0: int, size: int, margin: int, mode: str = "reflect") -> np.ndarray:
+    """The box plus a margin on every side. Where it runs off the image: reflected (for the network), or
+    mode="constant" for black (for people: a mirrored strip looks like real cells)."""
+    padded = np.pad(frame, margin, mode=mode) if margin else frame
     return padded[x0:x0 + size + 2 * margin, y0:y0 + size + 2 * margin]
 
 
@@ -319,7 +321,7 @@ def add_label(exp: dict, rows: list[dict], obs: dict, points: list, tracked: lis
 
 def point_states(row: dict, default: str) -> list[str]:
     """One state per point of a patch; older files without states get the default."""
-    s = row.get("states") or []
+    s = [LEGACY_STATES.get(v, v) for v in row.get("states") or []]
     return [s[i] if i < len(s) and s[i] else default for i in range(len(row["points"]))]
 
 

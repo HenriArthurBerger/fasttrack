@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsView
 
 TRACK_COLORS = ["#4cc9f0", "#f72585", "#b5e48c", "#ffd166", "#c77dff", "#ff9e6d", "#80ffdb", "#ff6b6b"]
@@ -81,18 +81,25 @@ class ImageCanvas(QGraphicsView):
         self.viewport().update()
         super().leaveEvent(event)
 
-    def set_texts(self, items: list[tuple[float, float, str, str]]) -> None:
+    def set_texts(self, items: list[tuple[float, float, str, str]], size: int = 18) -> None:
         """Small labels at (x, y) array coordinates: (x, y, text, colour). They keep their size when zooming."""
         for item in self._texts:
             self.scene().removeItem(item)
         self._texts.clear()
+        font = QFont()
+        font.setBold(True)
+        font.setPixelSize(size)
         for x, y, text, colour in items:
-            item = QGraphicsSimpleTextItem(text)
-            item.setBrush(QColor(colour))
-            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
-            item.setPos(y + 3, x + 3)
-            self.scene().addItem(item)
-            self._texts.append(item)
+            # a black copy one pixel behind each way: readable on bright nuclei and dark background alike
+            for (dx, dy), c in [(o, "#000000") for o in ((-1, -1), (1, -1), (-1, 1), (1, 1), (0, 2))] + [((0, 0), colour)]:
+                item = QGraphicsSimpleTextItem(text)
+                item.setFont(font)
+                item.setBrush(QColor(c))
+                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+                item.setPos(y + 3, x + 3)
+                item.setTransform(item.transform().translate(dx, dy))
+                self.scene().addItem(item)
+                self._texts.append(item)
 
     def set_image(self, gray: np.ndarray, overlay: np.ndarray | None = None, color=(255, 80, 80)) -> None:
         rgb = np.dstack([gray, gray, gray])

@@ -262,20 +262,25 @@ old analysis.
 HELP["centres"] = """
 **What this page is for (optional):** one labelling pass teaches FastTrack two things. **Centres**: seeds, one point
 per nucleus, decide everything after them (two seeds cut a nucleus in two, none loses it for a frame). **States**:
-what each cell is doing, such as dividing, dying or abnormal. You click both on the same patches. One dataset trains
+what each cell is doing, such as in mitosis, a new daughter, touching another nucleus, dying or abnormal. You click both on the same patches. One dataset trains
 two models: a seed finder for tracking and a state classifier that scores every track end, start and division.
 
 ## Steps
 
 1. Track a few positions first (Run).
-2. Press **Start labelling**. A patch opens at a likely mistake or event, with tracking's centres in blue.
-3. Make sure every nucleus whose centre lies **inside the yellow box** has exactly one point:
-   - click a point to remove it, click a nucleus without one to add a point (pink);
-   - press [[1]]–[[9]] with the crosshair on a point to give it that state (or add a point there with that state).
-     Points are the first state (e.g. neutral) unless you change them.
+2. Press **Start labelling**. A patch opens at a likely mistake or event, with tracking's centres as green circles.
+3. Make sure every nucleus whose centre lies **inside the white box** has exactly one circle:
+   - click a circle to remove it, click a nucleus without one to add one (yellow);
+   - press [[1]]–[[9]] with the crosshair on a circle to give it that state (or add one there with that state).
+     The state's number appears next to the circle; no number means the first state (neutral).
+
+   The states, by default: **neutral**; **mitosis**, a cell rounding up and dividing, before the split (it often
+   looks odd for a few frames first); **daughter**, a new cell in the first frames after the split; **touching**,
+   nuclei touching or overlapping, where centres are hardest; **death**; **abnormal**. Change or add states under
+   Cell states. Older labels that say division read as mitosis.
 
    The margin around the box is only context, and an empty box is a valid answer.
-4. Use [[←]] / [[→]] (or click the film strip) to flip through at least 3 frames before and after. An odd angle that
+4. Use [[←]] / [[→]] (or click the film strip) to flip through the 7 frames before and after (3–15 under Patches). An odd angle that
    looks like two nuclei is one if it stays one; a division splits and stays split. [[↑]] returns to the labelled
    frame, the only one you edit.
 5. [[Enter]] saves and moves on, [[Space]] skips, [[Backspace]] goes back, [[Ctrl+Z]] undoes. Aim for 100+ patches

@@ -25,7 +25,7 @@ def tracked(tmp_path_factory, device):
 
 
 def _label(tmp, exp, n, seed=1):
-    """Draw n patches and label every centre from the synthetic truth; every third point is a 'division'."""
+    """Draw n patches and label every centre from the synthetic truth; every third point is in mitosis."""
     reader = centres.NuclearReader(exp, None, 2)
     sampler = centres.Sampler(exp, reader.shape, seed=seed, available=reader.all())
     rows, sources = dataset.read_dataset(exp), set()
@@ -36,7 +36,7 @@ def _label(tmp, exp, n, seed=1):
         m = (truth["t"] == obs["t"]) & (truth["x"] >= obs["x0"]) & (truth["x"] < obs["x0"] + 64) \
             & (truth["y"] >= obs["y0"]) & (truth["y"] < obs["y0"] + 64)
         pts = np.stack([truth["x"][m], truth["y"][m]], 1).tolist()
-        states = ["division" if (len(rows) + i) % 3 == 0 else "" for i in range(len(pts))]
+        states = ["mitosis" if (len(rows) + i) % 3 == 0 else "" for i in range(len(pts))]
         rows = centres.add_label(exp, rows, obs, pts, sampler.tracked_points(obs), states)
         sources.add(obs["source"])
     reader.close()
@@ -49,12 +49,12 @@ def test_states_are_saved_with_points_and_old_files_get_the_default(tracked):
     assert sources & set(centres.EVENT_SOURCES), sources          # event candidates are drawn as patches too
     saved = centres.read_labels(exp)
     assert all(len(r["states"]) == len(r["points"]) for r in saved)
-    assert all(s in ("neutral", "division") for r in saved for s in r["states"])
+    assert all(s in ("neutral", "mitosis") for r in saved for s in r["states"])
     old = {k: v for k, v in saved[0].items() if k != "states"}
     assert centres.point_states(old, "neutral") == ["neutral"] * len(old["points"])
     cells = dataset.cell_examples(exp, saved)
     assert len(cells) == sum(len(r["points"]) for r in saved)
-    assert dataset.summary(exp, saved)["categories"]["division"] > 0
+    assert dataset.summary(exp, saved)["categories"]["mitosis"] > 0
 
 
 def test_events_csv_is_copied_in_once_as_state_only_rows(tracked):
@@ -83,7 +83,7 @@ def test_both_models_train_and_every_label_is_checked(tracked):
     _label(tmp, exp, 6, seed=2)
     out = dataset.train_all(exp)
     assert "error" not in out["centres"] and "error" not in out["states"], out
-    assert set(out["states"]["classes"]) >= {"neutral", "division"}
+    assert set(out["states"]["classes"]) >= {"neutral", "mitosis"}
     assert events.load_model(events.model_path(exp), exp["pipeline"]["device"])[1]["settings"]["follow"] is False
     review = dataset.check_labels(exp)
     rows = dataset.read_dataset(exp)

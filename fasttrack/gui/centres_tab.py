@@ -4,8 +4,8 @@ labels the models disagree with.
 Label. A patch opens at a likely mistake or event, with tracking's centres on it. Click a centre to remove it,
 click a nucleus without one to add it. Keys 1-9 give the point under the crosshair a state (or add a point
 there with that state); points have the first state unless you change it. Every nucleus whose centre is
-inside the yellow box needs exactly one point; the margin is context. Left/Right flip through the frames
-before and after (at least 3 each way) to tell an odd-shaped nucleus from two, a division from debris.
+inside the white box needs exactly one point; the margin is context. Left/Right flip through the frames
+before and after (7 each way by default) to tell an odd-shaped nucleus from two, a division from debris.
 
 Dataset. Every labelled patch, or every labelled cell grouped by state. Double-click one to correct it.
 
@@ -31,8 +31,11 @@ from ..experiment import LABELLING_DEFAULTS
 from .image_view import ImageCanvas
 from .worker import FunctionWorker
 
-KEPT, ADDED, BOX, OTHER, CONTEXT, MODEL = "#4cc9f0", "#f72585", "#ffd166", "#4cc9f0", "#5a6b78", "#ff9e00"
-STATE_COLOURS = ["#4cc9f0", "#ff9e00", "#ef233c", "#c77dff", "#80ffdb", "#b5e48c", "#f15bb5", "#00bbf9", "#fee440"]
+# bright, saturated colours that stand out on grey nuclei and the dark background
+KEPT, ADDED, BOX, OTHER, CONTEXT, MODEL = "#39ff14", "#ffee00", "#f0f0f0", "#39ff14", "#9aa0a8", "#c77dff"
+STATE_COLOURS = ["#39ff14", "#ff3b3b", "#ff4fd8", "#c77dff", "#ff8c00", "#ffffff", "#ffee00", "#00ff9c", "#9dff00"]
+RADIUS = 4.0      # image px: the centre circle
+PEN = 3.0         # screen px: marker lines, drawn over a dark outline
 NEAR = 5.0        # px: a click this close to a point removes it
 STATE_NEAR = 8.0  # px: a number key gives its state to the point this close to the crosshair
 
@@ -40,12 +43,18 @@ STATE_NEAR = 8.0  # px: a number key gives its state to the point this close to 
 def _scale(images: list[np.ndarray]) -> list[np.ndarray]:
     """uint8, log scaled, one contrast for all (from the middle frame) so the frames compare."""
     logs = [np.log2(np.maximum(a.astype(np.float32), 0) + 1) for a in images]
-    lo, hi = np.percentile(logs[len(logs) // 2], [1, 99.8])
+    mid = logs[len(logs) // 2]
+    lo, hi = np.percentile(mid[mid > 0] if (mid > 0).any() else mid, [1, 99.8])   # the black padding off the image edge does not count
     return [np.clip((a - lo) / (hi - lo + 1e-6) * 255, 0, 255).astype(np.uint8) for a in logs]
 
 
 def _circle(x: float, y: float, r: float) -> list[tuple[float, float]]:
-    return [(x + r * math.cos(a), y + r * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 13)]
+    return [(x + r * math.cos(a), y + r * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 25)]
+
+
+def _marked(path: list[tuple[float, float]], colour: str, width: float = PEN) -> list[tuple]:
+    """A path in `colour` over a dark outline, so it shows on bright nuclei and dark background alike."""
+    return [(path, "#000000", width + 2.5), (path, colour, width)]
 
 
 def _square(x: float, y: float, r: float) -> list[tuple[float, float]]:
@@ -69,8 +78,10 @@ def _thumb(gray: np.ndarray, side: int, box=None, points=(), border: str | None 
         p.setPen(QPen(QColor(BOX), 1))
         p.drawRect(int(m * f), int(m * f), int(s * f), int(s * f))
     for x, y, colour in points:
-        p.setPen(QPen(QColor(colour), 1.5))
-        p.drawEllipse(QPointF(y * f, x * f), 3.0, 3.0)
+        p.setPen(QPen(QColor(0, 0, 0, 200), 3.5))
+        p.drawEllipse(QPointF(y * f, x * f), 3.5, 3.5)
+        p.setPen(QPen(QColor(colour), 2.0))
+        p.drawEllipse(QPointF(y * f, x * f), 3.5, 3.5)
     if border:
         p.setPen(QPen(QColor(border), 4))
         p.drawRect(1, 1, pix.width() - 2, pix.height() - 2)
@@ -172,7 +183,7 @@ class CentresTab(QWidget):
         self.margin.setToolTip("Context shown around the box. Nuclei centred there are not labelled.")
         form.addRow("Margin (px)", self.margin)
         self.context = QSpinBox()
-        self.context.setRange(3, 10)
+        self.context.setRange(3, 15)
         self.context.setToolTip("Frames shown before and after the labelled one (Left/Right flips through them). Seeing a nucleus "
                                 "over time tells an odd angle from two nuclei, and a division from debris.")
         form.addRow("Frames before and after", self.context)
@@ -299,7 +310,7 @@ class CentresTab(QWidget):
         ml.addLayout(top)
         self.canvas = ImageCanvas()
         self.canvas.setMinimumSize(420, 420)
-        self.canvas.set_crosshair(True)
+        self.canvas.set_crosshair(True, "#00f0ff")   # cyan: unlike every marker colour
         self.canvas.pixel_clicked.connect(self._clicked)
         self.canvas.pixel_hovered.connect(lambda x, y: setattr(self, "hover", (x, y)))
         ml.addWidget(self.canvas, 1)
@@ -307,7 +318,14 @@ class CentresTab(QWidget):
         self.film = QHBoxLayout(self.film_host)
         self.film.setContentsMargins(0, 0, 0, 0)
         self.film.setSpacing(4)
-        ml.addWidget(self.film_host, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.film.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.film_scroll = film_scroll = QScrollArea()          # 15 frames fit a wide window; a narrow one scrolls
+        film_scroll.setWidget(self.film_host)
+        film_scroll.setWidgetResizable(True)
+        film_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        film_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        film_scroll.setFixedHeight(120)
+        ml.addWidget(film_scroll)
         self.legend = QLabel("")
         self.legend.setWordWrap(True)
         ml.addWidget(self.legend)
@@ -396,7 +414,8 @@ class CentresTab(QWidget):
         c = self.c
         self.patch.setValue(int(c["patch"]))
         self.margin.setValue(int(c["margin"]))
-        self.context.setValue(max(3, int(c.get("context", 3))))
+        context = int(c.get("context", 7))
+        self.context.setValue(7 if context == 3 else context)   # 3 was the earlier default; 7 shows a division's run-up
         for key, w in self.weights.items():
             w.setValue(float(c["sample"].get(key, 0)))
         self.sigma.setValue(float(c["count_sigma"]))
@@ -477,7 +496,7 @@ class CentresTab(QWidget):
         return exp
 
     def _frame_range(self, t: int) -> list[int]:
-        k = max(3, int(self.c.get("context", 3)))
+        k = max(3, int(self.c.get("context", 7)))
         return list(range(t - k, t + k + 1))
 
     def _draw(self) -> tuple[dict, list[np.ndarray]] | None:
@@ -510,7 +529,7 @@ class CentresTab(QWidget):
         self.current = obs
         self._raw = frames
         m = int(self.c["margin"])
-        cuts = [centres.cut(f, obs["x0"], obs["y0"], obs["size"], m) for f in frames]
+        cuts = [centres.cut(f, obs["x0"], obs["y0"], obs["size"], m, "constant") for f in frames]
         self.k = len(cuts) // 2
         self.grays = _scale(cuts)
         self.tracked = self.sampler.tracked_points(obs)
@@ -550,7 +569,9 @@ class CentresTab(QWidget):
                 w.setParent(None)
                 w.deleteLater()
         m, s = int(self.c["margin"]), self.current["size"]
-        side = max(70, min(130, 1000 // (2 * self.k + 1)))
+        n = 2 * self.k + 1
+        side = max(56, min(130, (max(self.canvas.width(), 600) - 4 * n) // n))
+        self.film_scroll.setFixedHeight(side + 40)   # thumbnails, their frame numbers, and room for a scroll bar
         self.thumbs = []
         for i, dt in enumerate(range(-self.k, self.k + 1)):
             cell = QWidget()
@@ -583,11 +604,12 @@ class CentresTab(QWidget):
 
     def _legend(self) -> None:
         cats = self.lab["categories"]
-        states = "   ".join(f"<span style='color:{STATE_COLOURS[i % len(STATE_COLOURS)]}'><b>{i + 1}</b> {c}</span>" for i, c in enumerate(cats[:9]))
-        self.legend.setText(f"<span style='color:{KEPT}'>●</span> found by tracking   <span style='color:{ADDED}'>●</span> added by you   "
-                            f"<span style='color:{BOX}'>□</span> label every nucleus centred inside.   Click a point to remove it, a nucleus to add "
-                            f"one. States, keys over a point: {states} (the first is the default).   ←/→ flip frames, ↑ back to the labelled "
-                            "frame. Wheel zooms, drag pans.")
+        chip = lambda colour, text: f"<span style='background:#15171c;color:{colour}'>&nbsp;<b>{text}</b>&nbsp;</span>"   # bright colours need a dark chip
+        states = " ".join(chip(STATE_COLOURS[i % len(STATE_COLOURS)], f"{i + 1} {c}") for i, c in enumerate(cats[:9]))
+        self.legend.setText(f"{chip(KEPT, '○')} found by tracking   {chip(ADDED, '○')} added by you   "
+                            f"{chip(BOX, '□')} label every nucleus centred inside.   Click a circle to remove it, a nucleus to add "
+                            f"one. States: press the number over a circle: {states}. The number is shown next to the circle; "
+                            f"no number = {cats[0] if cats else 'default'}.   ←/→ flip frames, ↑ back to the labelled frame. Wheel zooms, drag pans.")
 
     def _state_colour(self, state: str) -> str:
         cats = self.lab["categories"]
@@ -600,33 +622,34 @@ class CentresTab(QWidget):
         m, s = int(self.c["margin"]), obs["size"]
         ox, oy = obs["x0"] - m, obs["y0"] - m
         self.canvas.set_image(self.grays[self.k + self.view_dt])
-        groups = [([(m - .5, m - .5), (m - .5, m + s - .5), (m + s - .5, m + s - .5), (m + s - .5, m - .5), (m - .5, m - .5)], BOX, 1.5)]
+        groups = _marked([(m - .5, m - .5), (m - .5, m + s - .5), (m + s - .5, m + s - .5), (m + s - .5, m - .5), (m - .5, m - .5)], BOX, 1.5)
         texts = []
         default = self.lab["categories"][0] if self.lab["categories"] else ""
         if self.view_dt == 0:
             tracked = {(round(a, 1), round(b, 1)) for a, b in self.tracked}
+            cats = self.lab["categories"]
             for x, y in self.context_pts:
-                groups.append((_circle(x - ox, y - oy, 2.5), CONTEXT, 1.5))
+                groups += _marked(_circle(x - ox, y - oy, RADIUS), CONTEXT, 1.5)
             for (x, y), st in zip(self.points, self.states):
                 colour = KEPT if (round(x, 1), round(y, 1)) in tracked else ADDED
-                groups.append((_circle(x - ox, y - oy, 2.5), colour, 2.0))
+                groups += _marked(_circle(x - ox, y - oy, RADIUS), colour)
                 if st != default:
-                    groups.append((_circle(x - ox, y - oy, 5.0), self._state_colour(st), 2.0))
-                    texts.append((x - ox, y - oy, st[:4], self._state_colour(st)))
+                    label = str(cats.index(st) + 1) if st in cats else st[:4]
+                    texts.append((x - ox - RADIUS - 5, y - oy + RADIUS - 1, label, self._state_colour(st)))   # just right of the circle
             if self.overlay and self.overlay.get("model_points"):
                 for x, y in self.overlay["model_points"]:
-                    groups.append((_square(x - ox, y - oy, 3.5), MODEL, 1.5))
+                    groups += _marked(_square(x - ox, y - oy, RADIUS + 1.5), MODEL, 2.0)
             if self.overlay and self.overlay.get("kind") == "state":
                 x, y = self.overlay["x"], self.overlay["y"]
-                groups.append((_circle(x - ox, y - oy, 8.0), MODEL, 1.5))
-                texts.append((x - ox + 6, y - oy, f"model: {self.overlay['predicted']}", MODEL))
+                groups += _marked(_circle(x - ox, y - oy, RADIUS * 2.2), MODEL, 2.0)
+                texts.append((x - ox + 6, y - oy + 6, f"model: {self.overlay['predicted']}", MODEL))
         else:
             # another frame: tracking's centres there, and your points of the labelled frame as faint marks to compare
             for x, y in self.tracked_at[self.view_dt]:
-                groups.append((_circle(x - ox, y - oy, 2.5), OTHER, 1.0))
+                groups += _marked(_circle(x - ox, y - oy, RADIUS), OTHER, 2.0)
             for x, y in self.points:
-                groups.append(([(x - ox - 2, y - oy), (x - ox + 2, y - oy)], CONTEXT, 1.0))
-                groups.append(([(x - ox, y - oy - 2), (x - ox, y - oy + 2)], CONTEXT, 1.0))
+                groups += _marked([(x - ox - 2.5, y - oy), (x - ox + 2.5, y - oy)], CONTEXT, 2.0)
+                groups += _marked([(x - ox, y - oy - 2.5), (x - ox, y - oy + 2.5)], CONTEXT, 2.0)
             texts.append((m + 2, m + 2, f"frame {obs['t'] + self.view_dt} ({self.view_dt:+d}): view only, ↑ to edit", BOX))
         self.canvas.set_paths(groups)
         self.canvas.set_texts(texts)
@@ -888,7 +911,7 @@ class CentresTab(QWidget):
                     continue
                 for j in js:
                     m = 8 if j["size"] > 48 else 0
-                    on_event({"key": j["key"], "gray": centres.cut(frame, max(0, j["x0"]), max(0, j["y0"]), j["size"], m), "m": m})
+                    on_event({"key": j["key"], "gray": centres.cut(frame, max(0, j["x0"]), max(0, j["y0"]), j["size"], m, "constant"), "m": m})
             return None
 
         def arrived(e):
