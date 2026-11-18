@@ -12,3 +12,5 @@ runs/
 *.nd2
 *.tif
 *.tiff
+build/
+dist/
