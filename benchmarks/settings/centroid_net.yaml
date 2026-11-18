@@ -1,0 +1,5 @@
+# Settings for benchmarks/centroid_net.py
+experiment: ""          # optional: compare with classical seeds on this experiment's raw data
+out: runs/seednet.pt
+label_frames: 40
+steps: 800

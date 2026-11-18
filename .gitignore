@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+runs/
+
+# data and trained models live with the results, not in the repo
+*.h5
+*.pt
+*.pth
+*.npz
+*.nd2
+*.tif
+*.tiff

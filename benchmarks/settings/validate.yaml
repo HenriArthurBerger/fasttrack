@@ -1,0 +1,6 @@
+# Settings for benchmarks/validate.py (synthetic ground truth; no real data needed)
+experiment: ""          # optional: take tracking parameters from this experiment file
+preset: mosaic          # mosaic, populated or dense
+seeds: 3
+frames: 100
+size: 1024

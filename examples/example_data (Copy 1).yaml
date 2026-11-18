@@ -1,0 +1,373 @@
+# FastTrack experiment, saved 2026-11-07 11:09. Every setting is written out so a rerun gives the same result.
+fasttrack_version: 0.1.0
+experiment:
+  name: Example data (A02 sparse with a fiber in xy1 and xy2, B04 dense)
+  notes: 'The two example wells shipped in ExampleData. Channel names are placeholders: rename them on the Experiment tab.'
+paths:
+  raw: /media/henriberger/easystore/Henri_Data/2024-01-03_NS_DMI_C_P_M_G_T_TP_TM_TG_GP_GM_T200nM_M200nM_G1uM_P2uM_rename
+  results: /home/henriberger/Developer/FastTrack/refactor/runs/example_results
+files:
+  pattern: (?P<well>[A-H]\d{2})_Time(?P<t>\d+)_xy(?P<pos>\d+)c(?P<chan>\d+)\.tiff?$
+  first_frame: 0
+  last_frame: 0
+  stride: 1
+  io_threads: 16
+channels:
+- file_channel: 1
+  name: nuclear
+  role: nuclear
+  reporter: H2B
+  color: '#2d63e5'
+- file_channel: 2
+  name: c2
+  role: measure
+  reporter: PPARG
+  color: '#00aa00'
+- file_channel: 3
+  name: c3
+  role: measure
+  reporter: ERKKTR
+  color: '#ff0000'
+time:
+  frames_per_hour: 0.0
+  events: []
+plate:
+  format: 96
+  process: assigned
+  conditions:
+  - name: Ctrl
+    color: '#2d63e5'
+    wells:
+    - E02
+    - F02
+    - G02
+    notes: ''
+  - name: Palbo
+    color: '#cc3d3d'
+    wells:
+    - E03
+    - F03
+    - G03
+    notes: ''
+  - name: MekI
+    color: '#3a9e4f'
+    wells:
+    - E04
+    - F04
+    - G04
+    notes: ''
+  - name: Gne
+    color: '#e08a1e'
+    wells:
+    - E05
+    - F05
+    - G05
+    notes: ''
+  - name: Tdi
+    color: '#8a4fbf'
+    wells:
+    - E06
+    - F06
+    - G06
+    notes: ''
+  - name: Tdi + Palbo
+    color: '#1fa3a3'
+    wells:
+    - E07
+    - F07
+    - G07
+    notes: ''
+  - name: Tdi + MekI
+    color: '#c2457a'
+    wells:
+    - E08
+    - F08
+    - G08
+    notes: ''
+  - name: Tdi + Gne
+    color: '#6b6b6b'
+    wells:
+    - E09
+    - F09
+    - G09
+    notes: ''
+  - name: Gne + Palbo
+    color: '#9e7b2f'
+    wells:
+    - E10
+    - F10
+    - G10
+    notes: ''
+  - name: Gne + MekI
+    color: '#4f7fbf'
+    wells:
+    - E11
+    - F11
+    - G11
+    notes: ''
+  excluded_wells: []
+  excluded_positions: []
+quality:
+  enabled: true
+  checked: false
+  frames_per_position: 6
+  reference_positions: 48
+  tiles_per_edge: 16
+  low_quantile: 0.01
+  mid_quantile: 0.5
+  z_threshold: 6.0
+  area_threshold: 0.02
+  level_threshold: 6.0
+  frame_fraction: 0.34
+  seed: 0
+  flagged: {}
+  keep: []
+labelling:
+  categories:
+  - neutral
+  - division
+  - death
+  - abnormal
+  window: 2
+  crop: 48
+  channels: []
+  sample:
+    random: 0.3
+    track_end: 0.3
+    track_start: 0.15
+    division: 0.25
+  train_steps: 600
+  seed: 0
+  labels_file: Labels/events.csv
+  model_file: Labels/event_model.pt
+pipeline:
+  device: cuda:0
+  batch_size: 100
+  batch_auto: true
+  batch_max: 500
+  vram_fraction: 0.75
+  prefetch_batches: 1
+  seed: 0
+  background:
+    tiles_per_edge: 21
+    tile_quantile: 0.01
+    scale_quantile: 0.02
+    chunk_frames: 25
+  mask:
+    tiles_per_edge: 21
+    rough_std: 5.0
+    foreground_quantile: 0.01
+    background_quantile: 0.98
+    threshold_scale: 0.6
+    log_sigma: 2.0
+    log_kernel: 11
+  centroids:
+    method: notebook
+    blur_sigma: 1.5
+    seed_overlap: 1.75
+    cnn_checkpoint: ''
+    cnn_threshold: 0.35
+  measure:
+    subsections: 7
+    even_median: lower
+  underseg:
+    enabled: true
+    min_child_area_frac: 0.2
+    kmeans_iters: 6
+    max_rounds: 25
+  link:
+    method: multipass
+    correct_shift: true
+    min_shift: 3
+    max_travel: 0.0
+    max_travel_factor: 2.0
+    max_travel_floor: 15.0
+    move_weight: 5.0
+    division: true
+    division_mass_tol: 0.7
+    division_sister_tol: 1.0
+    division_net_count: true
+    division_radius: 25.0
+    max_gap: 3
+    gap_penalty: 0.5
+    cleanup_cost_quantile: 0.995
+    history: 5
+    feature_clip: 6.0
+    distance_weight: 1.0
+    max_cost: 8.0
+    assignment: lsa
+    lsa_max_cells: 1000
+    division_distance: 35.0
+  output:
+    save_measurements: true
+    overwrite: false
+    gui_cache_layers:
+    - binary_mask
+    - label_map
+analysis:
+  min_track_frames: 20
+  drop_border: true
+  groups:
+  - name: both
+    conditions:
+    - A02 sparse
+    - B04 dense
+  gates:
+  - name: c2 high
+    metric:
+      measure: nuc_median
+      channel: c2
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: true
+      smooth: 0
+    threshold: 8.0
+    above: true
+figures:
+  folder: Figures
+  formats:
+  - pdf
+  - png
+  dpi: 200
+  width: 6.0
+  height: 4.0
+  list:
+  - name: Cells per position
+    kind: cell_count
+    group: ''
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: ''
+    event: ''
+    bin: 10
+    style: violin
+    unit: cell
+    stats: true
+    frames:
+    - 0
+    - 0
+    time_zero_event: ''
+    show_events: true
+    enabled: true
+  - name: c2 nuclear median
+    kind: timecourse
+    group: both
+    metric:
+      measure: nuc_median
+      channel: c2
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: true
+      smooth: 0
+    gate: ''
+    event: ''
+    bin: 10
+    style: violin
+    unit: cell
+    stats: true
+    frames:
+    - 0
+    - 0
+    time_zero_event: ''
+    show_events: true
+    enabled: true
+  - name: c2 cytoplasm over nucleus
+    kind: timecourse
+    group: ''
+    metric:
+      measure: cyto_median
+      channel: c2
+      over_measure: nuc_median
+      over_channel: ''
+      background_percentile: 5
+      log2: false
+      smooth: 0
+    gate: ''
+    event: ''
+    bin: 10
+    style: violin
+    unit: cell
+    stats: true
+    frames:
+    - 0
+    - 0
+    time_zero_event: ''
+    show_events: true
+    enabled: true
+  - name: c2 heatmap
+    kind: heatmap
+    group: ''
+    metric:
+      measure: nuc_median
+      channel: c2
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: true
+      smooth: 5
+    gate: ''
+    event: ''
+    bin: 10
+    style: violin
+    unit: cell
+    stats: true
+    frames:
+    - 0
+    - 0
+    time_zero_event: ''
+    show_events: true
+    enabled: true
+  - name: c2 high
+    kind: percent_high
+    group: ''
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: c2 high
+    event: ''
+    bin: 10
+    style: violin
+    unit: cell
+    stats: true
+    frames:
+    - 0
+    - 0
+    time_zero_event: ''
+    show_events: true
+    enabled: true
+  - name: Nuclear area, last 20 frames
+    kind: distribution
+    group: ''
+    metric:
+      measure: nuc_area
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: ''
+    event: ''
+    bin: 10
+    style: violin
+    unit: cell
+    stats: true
+    frames:
+    - 81
+    - 0
+    time_zero_event: ''
+    show_events: true
+    enabled: true

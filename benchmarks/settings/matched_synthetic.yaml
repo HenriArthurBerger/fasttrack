@@ -1,0 +1,8 @@
+# Settings for benchmarks/matched_synthetic.py. Raw data is only read.
+experiment: ""          # experiment file: raw data folder and tracking parameters (required)
+out: runs/matched
+timestacks: []          # e.g. [G02_xy1, H06_xy6]; empty = pick `random` of them
+random: 1
+frames: 0               # 0 = all
+seed: null
+refine: 1               # correction rounds after the first fit

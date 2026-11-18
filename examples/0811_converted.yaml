@@ -1,0 +1,687 @@
+# FastTrack experiment, saved 2026-11-05 18:12. Every setting is written out so a rerun gives the same result.
+fasttrack_version: 0.1.0
+experiment:
+  name: 2023-08-11 NS DMI ROSI x MekI x Palbo x TDI
+  notes: Converted from Config/0811_All_Batches.yaml. Set the raw data folder before tracking. Thresholds are log2 values
+    as in the notebook. plothist / make_graphs / background_removal from the old file are replaced by the figure list below.
+paths:
+  raw: ''
+  results: /Volumes/Aokigahara/Henri_Data/2023-08-11_NS_DMI_ROSI_NS_M_MP_T_TM_TMP_tracked
+files:
+  pattern: (?P<well>[A-H]\d{2})_Time(?P<t>\d+)_xy(?P<pos>\d+)c(?P<chan>\d+)\.tiff?$
+  first_frame: 0
+  last_frame: 350
+  stride: 1
+  io_threads: 16
+channels:
+- file_channel: 1
+  name: H2B
+  role: nuclear
+  reporter: ''
+  color: '#2d63e5'
+- file_channel: 2
+  name: PPARY
+  role: measure
+  reporter: ''
+  color: '#cc3d3d'
+- file_channel: 3
+  name: Geminin
+  role: measure
+  reporter: ''
+  color: '#3a9e4f'
+time:
+  frames_per_hour: 0.0
+  events:
+  - name: DMI addition
+    frame: 0
+    color: '#444444'
+plate:
+  format: 96
+  process: assigned
+  conditions:
+  - name: NS
+    color: '#2d63e5'
+    wells:
+    - B02
+    - B03
+    - B04
+    notes: ''
+  - name: DMI
+    color: '#cc3d3d'
+    wells:
+    - B05
+    - B06
+    - B07
+    notes: ''
+  - name: ROSI
+    color: '#3a9e4f'
+    wells:
+    - B08
+    - B09
+    - B10
+    notes: ''
+  - name: NS MekI
+    color: '#e08a1e'
+    wells:
+    - C02
+    - C03
+    - C04
+    notes: ''
+  - name: DMI MekI
+    color: '#8a4fbf'
+    wells:
+    - C05
+    - C06
+    - C07
+    notes: ''
+  - name: ROSI MekI
+    color: '#1fa3a3'
+    wells:
+    - C08
+    - C09
+    - C10
+    notes: ''
+  - name: NS MekI Palbo
+    color: '#c2457a'
+    wells:
+    - D02
+    - D03
+    - D04
+    notes: ''
+  - name: DMI MekI Palbo
+    color: '#6b6b6b'
+    wells:
+    - D05
+    - D06
+    - D07
+    notes: ''
+  - name: ROSI MekI Palbo
+    color: '#9e7b2f'
+    wells:
+    - D08
+    - D09
+    - D10
+    notes: ''
+  - name: NS TDI
+    color: '#4f7fbf'
+    wells:
+    - E02
+    - E03
+    - E04
+    notes: ''
+  - name: DMI TDI
+    color: '#bf4f4f'
+    wells:
+    - E05
+    - E06
+    - E07
+    notes: ''
+  - name: ROSI TDI
+    color: '#5fae5f'
+    wells:
+    - E08
+    - E09
+    - E10
+    notes: ''
+  - name: NS TDI MekI
+    color: '#2d63e5'
+    wells:
+    - F02
+    - F03
+    - F04
+    notes: ''
+  - name: DMI TDI MekI
+    color: '#cc3d3d'
+    wells:
+    - F05
+    - F06
+    - F07
+    notes: ''
+  - name: ROSI TDI MekI
+    color: '#3a9e4f'
+    wells:
+    - F08
+    - F09
+    - F10
+    notes: ''
+  - name: NS TDI MekI Palbo
+    color: '#e08a1e'
+    wells:
+    - G02
+    - G03
+    - G04
+    notes: ''
+  - name: DMI TDI MekI Palbo
+    color: '#8a4fbf'
+    wells:
+    - G05
+    - G06
+    - G07
+    notes: ''
+  - name: ROSI TDI MekI Palbo
+    color: '#1fa3a3'
+    wells:
+    - G08
+    - G09
+    - G10
+    notes: ''
+  excluded_wells: []
+  excluded_positions: []
+pipeline:
+  device: cuda:0
+  batch_size: 100
+  batch_auto: true
+  batch_max: 500
+  vram_fraction: 0.75
+  prefetch_batches: 1
+  seed: 0
+  background:
+    tiles_per_edge: 21
+    tile_quantile: 0.01
+    scale_quantile: 0.02
+    chunk_frames: 25
+  mask:
+    tiles_per_edge: 21
+    rough_std: 5.0
+    foreground_quantile: 0.01
+    background_quantile: 0.98
+    threshold_scale: 0.6
+    log_sigma: 2.0
+    log_kernel: 11
+  centroids:
+    method: notebook
+    blur_sigma: 1.5
+    seed_overlap: 1.75
+    cnn_checkpoint: ''
+    cnn_threshold: 0.35
+  measure:
+    subsections: 7
+    even_median: lower
+  underseg:
+    enabled: true
+    min_child_area_frac: 0.2
+    kmeans_iters: 6
+    max_rounds: 25
+  link:
+    method: multipass
+    correct_shift: true
+    min_shift: 3
+    max_travel: 0.0
+    max_travel_factor: 2.0
+    max_travel_floor: 15.0
+    move_weight: 5.0
+    division: true
+    division_mass_tol: 0.7
+    division_sister_tol: 1.0
+    division_net_count: true
+    division_radius: 25.0
+    max_gap: 3
+    gap_penalty: 0.5
+    cleanup_cost_quantile: 0.995
+    history: 5
+    feature_clip: 6.0
+    distance_weight: 1.0
+    max_cost: 8.0
+    assignment: lsa
+    lsa_max_cells: 1000
+    division_distance: 35.0
+  output:
+    save_measurements: true
+    overwrite: false
+    gui_cache_layers:
+    - binary_mask
+    - label_map
+analysis:
+  min_track_frames: 30
+  drop_border: true
+  groups:
+  - name: All
+    conditions:
+    - NS
+    - DMI
+    - ROSI
+    - NS MekI
+    - DMI MekI
+    - ROSI MekI
+    - NS MekI Palbo
+    - DMI MekI Palbo
+    - ROSI MekI Palbo
+    - NS TDI
+    - DMI TDI
+    - ROSI TDI
+    - NS TDI MekI
+    - DMI TDI MekI
+    - ROSI TDI MekI
+    - NS TDI MekI Palbo
+    - DMI TDI MekI Palbo
+    - ROSI TDI MekI Palbo
+  - name: NS
+    conditions:
+    - NS
+    - DMI
+    - ROSI
+    - NS MekI
+    - DMI MekI
+    - ROSI MekI
+    - NS MekI Palbo
+    - DMI MekI Palbo
+    - ROSI MekI Palbo
+    - NS TDI
+  - name: DMI
+    conditions:
+    - NS
+    - DMI
+    - DMI MekI
+    - DMI MekI Palbo
+    - DMI TDI
+    - DMI TDI MekI
+    - DMI TDI MekI Palbo
+  - name: ROSI
+    conditions:
+    - NS
+    - DMI
+    - ROSI
+    - ROSI MekI
+    - ROSI MekI Palbo
+    - ROSI TDI
+    - ROSI TDI MekI
+    - ROSI TDI MekI Palbo
+  - name: TDI
+    conditions:
+    - NS TDI
+    - DMI TDI
+    - ROSI TDI
+    - NS TDI MekI
+    - DMI TDI MekI
+    - ROSI TDI MekI
+    - NS TDI MekI Palbo
+    - DMI TDI MekI Palbo
+    - ROSI TDI MekI Palbo
+  - name: MekI
+    conditions:
+    - NS
+    - DMI
+    - ROSI
+    - NS MekI
+    - DMI MekI
+    - ROSI MekI
+    - NS TDI MekI
+    - DMI TDI MekI
+    - ROSI TDI MekI
+  - name: MekI Palbo
+    conditions:
+    - NS
+    - DMI
+    - ROSI
+    - NS MekI Palbo
+    - DMI MekI Palbo
+    - ROSI MekI Palbo
+    - NS TDI MekI Palbo
+    - DMI TDI MekI Palbo
+    - ROSI TDI MekI Palbo
+  gates:
+  - name: H2B high
+    metric:
+      measure: nuc_mean
+      channel: H2B
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: true
+      smooth: 0
+    threshold: 10.0
+    above: true
+  - name: PPARY high
+    metric:
+      measure: nuc_mean
+      channel: PPARY
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: true
+      smooth: 0
+    threshold: 12.25
+    above: true
+  - name: Geminin high
+    metric:
+      measure: nuc_mean
+      channel: Geminin
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: true
+      smooth: 0
+    threshold: 8.5
+    above: true
+figures:
+  folder: Figures
+  formats:
+  - pdf
+  - png
+  dpi: 200
+  width: 6.0
+  height: 4.0
+  list:
+  - name: 'All: % PPARY high'
+    kind: percent_high
+    group: All
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: PPARY high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'All: % Geminin high'
+    kind: percent_high
+    group: All
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: Geminin high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'NS: % PPARY high'
+    kind: percent_high
+    group: NS
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: PPARY high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'NS: % Geminin high'
+    kind: percent_high
+    group: NS
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: Geminin high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'DMI: % PPARY high'
+    kind: percent_high
+    group: DMI
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: PPARY high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'DMI: % Geminin high'
+    kind: percent_high
+    group: DMI
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: Geminin high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'ROSI: % PPARY high'
+    kind: percent_high
+    group: ROSI
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: PPARY high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'ROSI: % Geminin high'
+    kind: percent_high
+    group: ROSI
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: Geminin high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'TDI: % PPARY high'
+    kind: percent_high
+    group: TDI
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: PPARY high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'TDI: % Geminin high'
+    kind: percent_high
+    group: TDI
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: Geminin high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'MekI: % PPARY high'
+    kind: percent_high
+    group: MekI
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: PPARY high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'MekI: % Geminin high'
+    kind: percent_high
+    group: MekI
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: Geminin high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'MekI Palbo: % PPARY high'
+    kind: percent_high
+    group: MekI Palbo
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: PPARY high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'MekI Palbo: % Geminin high'
+    kind: percent_high
+    group: MekI Palbo
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: Geminin high
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: DMI addition
+    show_events: true
+    enabled: true
+  - name: 'All: PPARY heatmap'
+    kind: heatmap
+    group: All
+    metric:
+      measure: nuc_mean
+      channel: PPARY
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: true
+      smooth: 0
+    gate: ''
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: ''
+    show_events: true
+    enabled: true
+  - name: 'All: PPARY at the end'
+    kind: distribution
+    group: All
+    metric:
+      measure: nuc_mean
+      channel: PPARY
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: true
+      smooth: 0
+    gate: ''
+    style: violin
+    frames:
+    - 300
+    - 0
+    time_zero_event: ''
+    show_events: true
+    enabled: true
+  - name: 'All: cells per position'
+    kind: cell_count
+    group: All
+    metric:
+      measure: nuc_median
+      channel: ''
+      over_measure: ''
+      over_channel: ''
+      background_percentile: 0.0
+      log2: false
+      smooth: 0
+    gate: ''
+    style: violin
+    frames:
+    - 0
+    - 0
+    time_zero_event: ''
+    show_events: true
+    enabled: true

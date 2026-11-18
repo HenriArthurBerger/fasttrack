@@ -1,0 +1,11 @@
+# Settings for benchmarks/event_classifier.py (synthetic ground truth; no real data needed)
+experiment: ""
+out: runs/event_classifier
+train_positions: 3
+test_positions: 2
+frames: 120
+size: 512
+cells: 60
+death_rate: 0.004
+per_class: 40          # labels per category, as a person would give
+seed: 0

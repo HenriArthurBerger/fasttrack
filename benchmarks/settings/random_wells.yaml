@@ -1,0 +1,7 @@
+# Settings for benchmarks/random_wells.py. Raw data is only read.
+experiment: ""          # experiment file: raw data folder and tracking parameters (required)
+out: runs/random_wells  # relative to the refactor folder; must be outside the raw data
+wells: 3
+positions: 1            # random positions per well
+frames: 0               # 0 = all
+seed: null              # null = a new random choice, printed so it can be repeated
