@@ -6,6 +6,11 @@ unchanged. The input is the nuclear channel only, on a log scale in noise units,
 does not depend on a microscope's absolute intensity.
 
 Select it with centroids.method = "cnn" and centroids.cnn_checkpoint = <path>.
+
+Speed. The encoder can work at full resolution (stride 1, the first version) or at half (stride 2, the default
+since benchmarks/inference.py showed stride 1 at about 3x the classical pipeline on 1152 px frames, over the 2x
+budget; stride 2 is about 5x faster and uses a fifth of the memory). Nuclei of about 15 px are still about 7 px
+at half resolution, and the centre map is upsampled back to full size. Checkpoints record their stride.
 """
 from __future__ import annotations
 
@@ -14,16 +19,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 _MODELS: dict[tuple, nn.Module] = {}
+STRIDE = 2                 # new models: encoder at half resolution (see Speed above)
+CHUNK_PIXELS = 8 * 1024 * 1024 // 2   # frame pixels per forward pass at stride 1 (about 4 GB); twice that at stride 2
 
 
 class SeedNet(nn.Module):
-    """Encoder stride reduced at the stem, because nuclei here are only about 15 px across."""
+    """ResNet-18 layers 1-3 with a light decoder. The stem keeps full resolution (stride 1) or halves it (stride 2);
+    either way the output is a full-size map. ResNet's own stem (stride 4) would leave a 15 px nucleus 4 px wide."""
 
-    def __init__(self):
+    def __init__(self, stride: int = STRIDE):
         super().__init__()
         from torchvision.models import resnet18
         base = resnet18(weights=None)
-        self.stem = nn.Sequential(nn.Conv2d(1, 64, 5, padding=2, bias=False), base.bn1, base.relu)
+        self.stride = int(stride)
+        self.stem = nn.Sequential(nn.Conv2d(1, 64, 5, stride=self.stride, padding=2, bias=False), base.bn1, base.relu)
         self.enc1, self.enc2, self.enc3 = base.layer1, base.layer2, base.layer3
         self.up2 = nn.Sequential(nn.Conv2d(256 + 128, 64, 3, padding=1), nn.ReLU(inplace=True))
         self.up1 = nn.Sequential(nn.Conv2d(64 + 64, 32, 3, padding=1), nn.ReLU(inplace=True), nn.Conv2d(32, 1, 1))
@@ -35,7 +44,10 @@ class SeedNet(nn.Module):
         d = F.interpolate(d, size=m.shape[-2:], mode="bilinear", align_corners=False)
         u = self.up2(torch.cat([d, m], 1))
         u = F.interpolate(u, size=s.shape[-2:], mode="bilinear", align_corners=False)
-        return self.up1(torch.cat([u, s], 1))
+        out = self.up1(torch.cat([u, s], 1))
+        if out.shape[-2:] != x.shape[-2:]:
+            out = F.interpolate(out, size=x.shape[-2:], mode="bilinear", align_corners=False)
+        return out
 
 
 def normalize(nuclei: torch.Tensor) -> torch.Tensor:
@@ -67,14 +79,14 @@ def centre_map(points: torch.Tensor, shape: tuple, sigma: float) -> torch.Tensor
 
 
 def train(frames: torch.Tensor, points: torch.Tensor, sigma: float = 3.0, steps: int = 800, crop: int = 256,
-          batch: int = 12, lr: float = 2e-3, seed: int = 0, on_step=None) -> SeedNet:
+          batch: int = 12, lr: float = 2e-3, seed: int = 0, on_step=None, stride: int = STRIDE) -> SeedNet:
     """frames (T,1,X,Y) normalized; points (P,3) [t,x,y]. Returns a trained model.
 
     Sparse fields are mostly empty, so most crops are centred on a labelled nucleus.
     """
     device = frames.device
     torch.manual_seed(seed)
-    net = SeedNet().to(device)
+    net = SeedNet(stride).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
     schedule = torch.optim.lr_scheduler.OneCycleLR(optimizer, lr, total_steps=steps)
     target = centre_map(points, frames.shape, sigma)
@@ -108,7 +120,7 @@ def train(frames: torch.Tensor, points: torch.Tensor, sigma: float = 3.0, steps:
 
 
 def train_patches(images: torch.Tensor, inside: torch.Tensor, points: torch.Tensor, sigma: float = 3.0, steps: int = 1500,
-                  crop: int = 128, batch: int = 16, lr: float = 2e-3, seed: int = 0, on_step=None) -> SeedNet:
+                  crop: int = 128, batch: int = 16, lr: float = 2e-3, seed: int = 0, on_step=None, stride: int = STRIDE) -> SeedNet:
     """Train on labelled patches. images (N,1,P,P) normalized (see `normalize`, taken over the whole frame);
     inside (N,1,P,P) bool, the box in which every nucleus centre was clicked; points (M,3) [patch, x, y].
 
@@ -116,7 +128,7 @@ def train_patches(images: torch.Tensor, inside: torch.Tensor, points: torch.Tens
     """
     device = images.device
     torch.manual_seed(seed)
-    net = SeedNet().to(device)
+    net = SeedNet(stride).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
     schedule = torch.optim.lr_scheduler.OneCycleLR(optimizer, lr, total_steps=steps)
     target = centre_map(points, images.shape, sigma) if points.shape[0] else torch.zeros_like(images)
@@ -148,25 +160,33 @@ def train_patches(images: torch.Tensor, inside: torch.Tensor, points: torch.Tens
 
 
 def save_checkpoint(net: SeedNet, path: str) -> None:
-    torch.save(net.state_dict(), path)
+    torch.save({"arch": {"stride": net.stride}, "state": net.state_dict()}, path)
 
 
 def load_checkpoint(path: str, device) -> SeedNet:
     import os
     key = (path, str(device), os.path.getmtime(path))  # a retrained file is read again
     if key not in _MODELS:
-        net = SeedNet()
-        net.load_state_dict(torch.load(path, map_location=device, weights_only=True))
-        _MODELS[key] = net.to(device).eval()
+        saved = torch.load(path, map_location=device, weights_only=True)
+        if "state" not in saved:                 # first-version files: a bare state dict, full-resolution encoder
+            saved = {"arch": {"stride": 1}, "state": saved}
+        net = SeedNet(**saved["arch"])
+        net.load_state_dict(saved["state"])
+        _MODELS[key] = net.to(device).eval().to(memory_format=torch.channels_last)
     return _MODELS[key]
 
 
-def score_map(net: SeedNet, nuclei: torch.Tensor, chunk: int = 8) -> torch.Tensor:
+def score_map(net: SeedNet, nuclei: torch.Tensor, chunk: int | None = None) -> torch.Tensor:
+    """(T,1,X,Y) corrected nuclear channel -> (T,1,X,Y) centre score 0..1. Frames go through in chunks sized to
+    keep memory bounded at any frame size; channels_last is about 20% faster on tensor cores."""
     x = normalize(nuclei)
+    if chunk is None:
+        chunk = max(1, CHUNK_PIXELS * getattr(net, "stride", 1) ** 2 // (x.shape[-2] * x.shape[-1]))
     parts = []
     with torch.inference_mode(), torch.autocast(x.device.type, enabled=x.device.type == "cuda"):
         for start in range(0, x.shape[0], chunk):
-            parts.append(torch.sigmoid(net(x[start:start + chunk])).float())
+            part = x[start:start + chunk].contiguous(memory_format=torch.channels_last)
+            parts.append(torch.sigmoid(net(part)).float().contiguous())
     return torch.cat(parts)
 
 

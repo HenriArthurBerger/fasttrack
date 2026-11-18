@@ -408,8 +408,9 @@ def build_patches(exp: dict, rows: list[dict], timestacks: dict | None, device: 
 @torch.inference_mode()
 def patch_scores(net, images: torch.Tensor) -> torch.Tensor:
     out = []
-    for i in range(0, images.shape[0], 16):
-        out.append(torch.sigmoid(net(images[i:i + 16])).float())
+    with torch.inference_mode():
+        for i in range(0, images.shape[0], 16):
+            out.append(torch.sigmoid(net(images[i:i + 16])).float())
     return torch.cat(out)
 
 
@@ -466,7 +467,7 @@ def train_from_labels(exp: dict, on_event=lambda e: None, timestacks: dict | Non
         pts = pts.clone()
         if pts.shape[0]:
             pts[:, 0] = remap[pts[:, 0].long()].float()
-        return centroid_net.train_patches(images[idx], inside[idx], pts, steps=steps, seed=seed,
+        return centroid_net.train_patches(images[idx], inside[idx], pts, steps=steps, seed=seed, stride=int(c["stride"]),
                                           on_step=lambda s, l: s % 50 == 0 and on_event({"kind": "train", "phase": phase, "step": s, "steps": steps, "loss": l}))
 
     rng = np.random.default_rng(seed)
@@ -523,7 +524,7 @@ def cross_check(exp: dict, folds: int = 5, on_event=lambda e: None, timestacks: 
         pts = points[train[points[:, 0].long().cpu().numpy()]].clone() if points.shape[0] else points
         if pts.shape[0]:
             pts[:, 0] = remap[pts[:, 0].long()].float()
-        net = centroid_net.train_patches(images[idx], inside[idx], pts, steps=steps, seed=seed + k,
+        net = centroid_net.train_patches(images[idx], inside[idx], pts, steps=steps, seed=seed + k, stride=int(c["stride"]),
                                          on_step=lambda s, l, k=k: s % 50 == 0 and on_event({"kind": "train", "phase": f"centres, fold {k + 1} of {folds}",
                                                                                                "step": s, "steps": steps, "loss": l}))
         held = np.nonzero(~train)[0]

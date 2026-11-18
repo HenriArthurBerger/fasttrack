@@ -198,10 +198,25 @@ Residual tile-median spread (p5–p95) is 15, 11 and 45 counts for c1–c3, with
 counts. The level is comparable to the c2 and c3 nuclear signal (about 50–70), so subtract it before ratios, as
 `analysis.traces.ktr_ratio` does, following the notebook. This only measures flatness in background tiles.
 
-### ResNet seed finder (`benchmarks/centroid_net.py`)
+### ResNet seed finder: accuracy and speed budget (`benchmarks/inference.py`)
 
-Measured against my earlier seeds, and needs re-running against the notebook's: F1 0.945 and 0.972 vs 0.926 and 0.958
-on unseen synthetic movies, trained on 40 labelled frames. No labelling tool yet; training is by script.
+**Budget: learned models may at most double tracking time.** `benchmarks/inference.py experiment.yaml` times the
+classical pipeline and the seed finder on real frames held in memory, and appends the result to
+[`benchmarks/results/inference.csv`](benchmarks/results/inference.csv), so every change has a history. It exits with
+an error when the seed finder is over budget. `tests/test_speed.py` (GPU only) guards the same budget on synthetic frames.
+
+RTX 3090, 1152 px frames, 3 channels, 2024-12-15 plate, 82 labelled patches (508 centres), 5-fold out-of-fold F1:
+
+| | s / 100 frames | × classical | centre F1 |
+|---|---|---|---|
+| Classical (LoG mask, distance peaks) | 2.29 | 1.00 | 0.87 (on the held-out patches) |
+| Seed finder, encoder at full resolution (first version) | 6.16 | 2.70 | 0.979 |
+| **Seed finder, encoder at half resolution (default)** | **3.25** | **1.42** | **0.973** |
+| Encoder pass alone, half resolution, with a second (mask) head | 0.98 | 0.43 | – |
+
+Half resolution costs 5 more missed nuclei in 508 and is 5× faster in the encoder, with a fifth of the memory. A mask
+head on the same encoder costs nothing measurable, so a fully learned pipeline (seeds and masks from one pass) fits the
+budget. Models trained before the stride option still load (as full resolution); press Train both to get a fast one.
 
 ## Synthetic data
 
