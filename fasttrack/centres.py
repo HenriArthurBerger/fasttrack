@@ -235,10 +235,11 @@ class NuclearReader:
     def shape(self, key: str) -> tuple[int, int]:
         return tuple(layout.frame_shape(self.ts(key)))
 
-    def frame(self, key: str, t: int) -> np.ndarray:
-        """(X, Y) uint16; blank if the file is missing or unreadable, as in tracking."""
+    def frame(self, key: str, t: int, channel: int | None = None) -> np.ndarray:
+        """(X, Y) uint16 of the nuclear channel, or `channel` (an index into the loaded channels); blank if the
+        file is missing or unreadable, as in tracking."""
         ts = self.ts(key)
-        paths = list(ts["channels"].values())[self.channel]
+        paths = list(ts["channels"].values())[self.channel if channel is None else channel]
         shape = layout.frame_shape(ts)
         if not 0 <= t < ts["frames"]:
             return np.zeros(shape, np.uint16)
@@ -247,8 +248,8 @@ class NuclearReader:
         except layout.UnreadableFrame:
             return np.zeros(shape, np.uint16)
 
-    def frames(self, key: str, ts: list[int]) -> list[np.ndarray]:
-        return list(self.pool.map(lambda t: self.frame(key, t), ts))
+    def frames(self, key: str, ts: list[int], channel: int | None = None) -> list[np.ndarray]:
+        return list(self.pool.map(lambda t: self.frame(key, t, channel), ts))
 
     def close(self) -> None:
         self.pool.shutdown(wait=False)
@@ -467,7 +468,7 @@ def train_from_labels(exp: dict, on_event=lambda e: None, timestacks: dict | Non
         pts = pts.clone()
         if pts.shape[0]:
             pts[:, 0] = remap[pts[:, 0].long()].float()
-        return centroid_net.train_patches(images[idx], inside[idx], pts, steps=steps, seed=seed, stride=int(c["stride"]),
+        return centroid_net.train_patches(images[idx], inside[idx], pts, steps=steps, seed=seed, arch=c["architecture"],
                                           on_step=lambda s, l: s % 50 == 0 and on_event({"kind": "train", "phase": phase, "step": s, "steps": steps, "loss": l}))
 
     rng = np.random.default_rng(seed)
@@ -524,7 +525,7 @@ def cross_check(exp: dict, folds: int = 5, on_event=lambda e: None, timestacks: 
         pts = points[train[points[:, 0].long().cpu().numpy()]].clone() if points.shape[0] else points
         if pts.shape[0]:
             pts[:, 0] = remap[pts[:, 0].long()].float()
-        net = centroid_net.train_patches(images[idx], inside[idx], pts, steps=steps, seed=seed + k, stride=int(c["stride"]),
+        net = centroid_net.train_patches(images[idx], inside[idx], pts, steps=steps, seed=seed + k, arch=c["architecture"],
                                          on_step=lambda s, l, k=k: s % 50 == 0 and on_event({"kind": "train", "phase": f"centres, fold {k + 1} of {folds}",
                                                                                                "step": s, "steps": steps, "loss": l}))
         held = np.nonzero(~train)[0]

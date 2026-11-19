@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from PySide6.QtCore import QPointF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                                QListView, QListWidget, QListWidgetItem, QPushButton, QScrollArea, QSpinBox, QSplitter, QTabWidget,
                                QVBoxLayout, QWidget)
 
@@ -133,6 +133,8 @@ class CentresTab(QWidget):
         self.review: dict | None = None
         self.review_items: list[dict] = []
         self.thumb_cache: dict = {}
+        self.view_channel: int | None = None   # loaded-channel index shown; None = the nuclear channel
+        self.channel_grays: dict = {}          # channel -> scaled cuts of the open patch
 
         root = QHBoxLayout(self)
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -154,6 +156,7 @@ class CentresTab(QWidget):
         self._shortcut(QKeySequence(Qt.Key.Key_Left), lambda: self.view_frame(self.view_dt - 1))
         self._shortcut(QKeySequence(Qt.Key.Key_Right), lambda: self.view_frame(self.view_dt + 1))
         self._shortcut(QKeySequence(Qt.Key.Key_Up), lambda: self.view_frame(0))
+        self._shortcut(QKeySequence(Qt.Key.Key_C), self.cycle_channel)
         for n in range(1, 10):
             self._shortcut(QKeySequence(str(n)), lambda n=n: self.state_key(n))
 
@@ -244,6 +247,12 @@ class CentresTab(QWidget):
 
         box = QGroupBox("Models")
         form = QFormLayout(box)
+        self.arch = QComboBox()
+        from ..track.centroid_net import ARCHITECTURES
+        self.arch.addItems(list(ARCHITECTURES))
+        self.arch.setToolTip("Seed finder network. resnet18-half is the default; see the README's seed finder table for each one's "
+                             "accuracy and speed (benchmarks/inference.py measures it on your data). Applies at the next Train both.")
+        form.addRow("Seed finder network", self.arch)
         self.steps = QSpinBox()
         self.steps.setRange(100, 20000)
         self.steps.setSingleStep(100)
@@ -308,6 +317,13 @@ class CentresTab(QWidget):
         self.info.setWordWrap(True)
         top.addWidget(self.info, 1)
         ml.addLayout(top)
+        self.channel_row = QHBoxLayout()
+        self.channel_row.addWidget(QLabel("Show channel (C):"))
+        self.channel_group = QButtonGroup(self)
+        self.channel_group.setExclusive(True)
+        self.channel_group.idClicked.connect(self.show_channel)
+        self.channel_row.addStretch()
+        ml.addLayout(self.channel_row)
         self.canvas = ImageCanvas()
         self.canvas.setMinimumSize(420, 420)
         self.canvas.set_crosshair(True, "#00f0ff")   # cyan: unlike every marker colour
@@ -422,6 +438,7 @@ class CentresTab(QWidget):
         self.window.setValue(int(c["count_window"]))
         self.min_change.setValue(float(c["min_change"]))
         self.steps.setValue(int(c["train_steps"]))
+        self.arch.setCurrentText(c.get("architecture", "resnet18-half"))
         self.gate.setValue(float(c["match_distance"]))
         self.categories.setText(", ".join(lab["categories"]))
         self.state_window.setValue(int(lab["window"]))
@@ -443,7 +460,7 @@ class CentresTab(QWidget):
         lab["centres"].update({"patch": self.patch.value(), "margin": self.margin.value(), "context": self.context.value(),
                                "count_sigma": self.sigma.value(), "count_window": self.window.value() | 1, "min_change": self.min_change.value(),
                                "sample": {k: w.value() for k, w in self.weights.items()},
-                               "train_steps": self.steps.value(), "match_distance": self.gate.value()})
+                               "train_steps": self.steps.value(), "match_distance": self.gate.value(), "architecture": self.arch.currentText()})
         self.lab = lab
         return copy.deepcopy(lab)
 
@@ -532,6 +549,9 @@ class CentresTab(QWidget):
         cuts = [centres.cut(f, obs["x0"], obs["y0"], obs["size"], m, "constant") for f in frames]
         self.k = len(cuts) // 2
         self.grays = _scale(cuts)
+        self.nuclear_grays = self.grays
+        self.channel_grays = {}
+        self._channel_buttons()
         self.tracked = self.sampler.tracked_points(obs)
         self.wide = {**obs, "x0": obs["x0"] - m, "y0": obs["y0"] - m, "size": obs["size"] + 2 * m}
         self.tracked_at = {dt: self.sampler.tracked_points(self.wide, obs["t"] + dt) for dt in range(-self.k, self.k + 1)}
@@ -543,6 +563,9 @@ class CentresTab(QWidget):
         self.undo = []
         self.view_dt = 0
         self.canvas._user_zoomed = False
+        if self.view_channel is not None and not self._load_channel(self.view_channel):
+            self.view_channel = None
+            self._channel_buttons()
         self._film()
         self._redraw()
         self.canvas.setFocus()  # so Enter, Space and Backspace label instead of typing into a settings field
@@ -560,6 +583,67 @@ class CentresTab(QWidget):
             text += " Already labelled; Enter replaces it."
         self.info.setText(text)
         self._show_counts()
+
+    def _channel_names(self) -> list[tuple[int, str, bool]]:
+        """(index into the loaded channels, name, is nuclear) for every loaded channel."""
+        from ..experiment import loaded_channels
+        nuclear = self.reader.channel if self.reader is not None else 0
+        return [(i, c["name"], i == nuclear) for i, c in enumerate(loaded_channels(self._exp()))]
+
+    def _channel_buttons(self) -> None:
+        """One checkable button per loaded channel above the canvas; rebuilt only when the channels change."""
+        names = self._channel_names()
+        if [b.text() for b in self.channel_group.buttons()] != [n + (" (nuclear)" if nuc else "") for _, n, nuc in names]:
+            for b in self.channel_group.buttons():
+                self.channel_group.removeButton(b)
+                b.setParent(None)
+                b.deleteLater()
+            for i, name, nuc in names:
+                b = QPushButton(name + (" (nuclear)" if nuc else ""))
+                b.setCheckable(True)
+                b.setToolTip("View only: labels and models still use the nuclear channel.")
+                self.channel_group.addButton(b, i)
+                self.channel_row.insertWidget(self.channel_row.count() - 1, b)
+        shown = self.view_channel if self.view_channel is not None else (self.reader.channel if self.reader else 0)
+        b = self.channel_group.button(shown)
+        if b is not None:
+            b.setChecked(True)
+
+    def _load_channel(self, channel: int) -> bool:
+        """Point self.grays at `channel` for the open patch, reading its frames the first time."""
+        from .. import centres
+        if self.reader is None or self.current is None:
+            return False
+        if channel == self.reader.channel:
+            self.grays = self.nuclear_grays
+            return True
+        if channel not in self.channel_grays:
+            obs, m = self.current, int(self.c["margin"])
+            try:
+                frames = self.reader.frames(obs["position"], self._frame_range(obs["t"]), channel)
+            except (IndexError, KeyError, OSError, ValueError) as exc:
+                self.info.setText(f"Could not read that channel: {exc}")
+                return False
+            self.channel_grays[channel] = _scale([centres.cut(f, obs["x0"], obs["y0"], obs["size"], m, "constant") for f in frames])
+        self.grays = self.channel_grays[channel]
+        return True
+
+    def show_channel(self, channel: int) -> None:
+        """Show another channel in the large view and the film strip. Points and states are unchanged."""
+        if self.current is None:
+            return
+        if self._load_channel(channel):
+            self.view_channel = None if channel == self.reader.channel else channel
+            self._film()
+            self._redraw()
+        self._channel_buttons()
+
+    def cycle_channel(self) -> None:
+        names = [i for i, _, _ in self._channel_names()]
+        if self.current is None or len(names) < 2:
+            return
+        shown = self.view_channel if self.view_channel is not None else self.reader.channel
+        self.show_channel(names[(names.index(shown) + 1) % len(names)] if shown in names else names[0])
 
     def _film(self) -> None:
         while self.film.count():

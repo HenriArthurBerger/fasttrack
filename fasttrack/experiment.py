@@ -144,7 +144,7 @@ LABELLING_DEFAULTS = {
         "sample": {"count_change": 0.45, "random": 0.2, "track_end": 0.15, "track_start": 0.05, "division": 0.15},
         "context": 7,            # frames shown before and after the labelled frame (3-15), to tell odd shapes from doubles
         "train_steps": 1500,
-        "stride": 2,             # seed finder encoder: 2 = half resolution (about 5x faster), 1 = full (benchmarks/inference.py)
+        "architecture": "resnet18-half",   # seed finder network (track/centroid_net.py ARCHITECTURES; speed: benchmarks/inference.py)
         "match_distance": 6.0,   # px; a found centre this close to a clicked one counts as the same nucleus
         "labels_file": "Labels/centres.json",
         "model_file": "Labels/centre_model.pt",

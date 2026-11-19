@@ -11,9 +11,8 @@ method, so it is left out), then times `process_batch` on them with:
 and the network alone at the real frame size, for the variants that decide whether a fully learned pipeline
 (seeds and masks from one encoder) fits the budget:
 
-  stride 1             the first SeedNet: encoder at full resolution
-  stride 2             encoder at half resolution (the default)
-  seed + mask heads    stride 2 with a second output (a foreground mask): what a learned mask adds
+  every preset in track/centroid_net.ARCHITECTURES
+  + mask head          resnet18-half with a second output (a foreground mask): what a learned mask adds
 
 Each run appends one row per method to benchmarks/results/inference.csv (date, commit, GPU, frame size,
 seconds per 100 frames, ratio to classical), so a slowdown shows up in the history. Exits with status 1
@@ -142,7 +141,7 @@ def main(argv=None) -> int:
         sec = _time(run, device, repeat=2) * 100 / n
         base = base or sec
         if method == "seed finder":
-            method += f", stride {centroid_net.load_checkpoint(ckpt, device).stride}"
+            method += f", {centroid_net.load_checkpoint(ckpt, device).arch}"
         rows.append((method, sec, {k: round(v * 100 / n, 2) for k, v in stages.items()}))
         print(f"  {method}: {sec:.2f} s / 100 frames", flush=True)
         gc.collect()
@@ -150,8 +149,8 @@ def main(argv=None) -> int:
 
     # the network alone on the nuclear channel at full frame size
     x = centroid_net.normalize(torch.from_numpy(batches[0][:, cfg["nuclear_channel"]:cfg["nuclear_channel"] + 1].astype(np.float32)).to(device))
-    for method, net in (("net alone, stride 1", centroid_net.SeedNet(1)), ("net alone, stride 2", centroid_net.SeedNet(2)),
-                        ("net alone, stride 2, seed + mask heads", SeedMaskNet(2))):
+    nets = [(f"net alone, {name}", centroid_net.build(name)) for name in centroid_net.ARCHITECTURES]
+    for method, net in nets + [("net alone, resnet18-half + mask head", SeedMaskNet(2))]:
         chunk = max(1, centroid_net.CHUNK_PIXELS * net.stride ** 2 // (X * Y))
         try:
             sec = _net_time(net, x, device, chunk, True) * 100 / T
@@ -165,9 +164,9 @@ def main(argv=None) -> int:
         rows.append((method, sec, {}))
         print(f"  {method}: {sec:.2f} s / 100 frames", flush=True)
 
-    print(f"\n{'method':26s} {'s / 100 frames':>15s} {'x classical':>12s}   stages (s / 100 frames)")
+    print(f"\n{'method':40s} {'s / 100 frames':>15s} {'x classical':>12s}   stages (s / 100 frames)")
     for method, sec, stages in rows:
-        print(f"{method:26s} {sec:15.2f} {sec / base:12.2f}   " + " ".join(f"{k}={v}" for k, v in stages.items()))
+        print(f"{method:40s} {sec:15.2f} {sec / base:12.2f}   " + " ".join(f"{k}={v}" for k, v in stages.items()))
     seed = rows[1][1] / base
     verdict = "within" if seed <= BUDGET else "OVER"
     print(f"\nSeed finder: {seed:.2f}x classical, {verdict} the {BUDGET:.0f}x budget.")

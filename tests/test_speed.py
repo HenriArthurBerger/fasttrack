@@ -43,7 +43,7 @@ def test_encoder_pass_keeps_learned_tracking_within_twice_classical():
     cfg = make_config({"device": "cuda:0"})
     frames = frames.to("cuda:0")
     classical = _best(lambda: process_batch(frames, cfg))
-    net = centroid_net.SeedNet().to("cuda:0").eval().to(memory_format=torch.channels_last)
+    net = centroid_net.build().to("cuda:0").eval().to(memory_format=torch.channels_last)
     nuclei = frames[:, cfg["nuclear_channel"]:cfg["nuclear_channel"] + 1].float()
     encoder = _best(lambda: centroid_net.score_map(net, nuclei))
     assert encoder <= LIMIT * classical, (f"encoder pass {encoder:.2f}s vs classical pipeline {classical:.2f}s on 40 synthetic frames "

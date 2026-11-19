@@ -1,4 +1,4 @@
-"""Optional learned seed finder: a ResNet-18 encoder with a light decoder.
+"""Optional learned seed finder: a small encoder-decoder network that draws a centre map.
 
 Trained from point labels (a click on each nucleus centre, on a few dozen frames) to predict
 a Gaussian centre map. Seeds are then the h-maxima of that map, and everything downstream is
@@ -7,10 +7,15 @@ does not depend on a microscope's absolute intensity.
 
 Select it with centroids.method = "cnn" and centroids.cnn_checkpoint = <path>.
 
-Speed. The encoder can work at full resolution (stride 1, the first version) or at half (stride 2, the default
-since benchmarks/inference.py showed stride 1 at about 3x the classical pipeline on 1152 px frames, over the 2x
-budget; stride 2 is about 5x faster and uses a fifth of the memory). Nuclei of about 15 px are still about 7 px
-at half resolution, and the centre map is upsampled back to full size. Checkpoints record their stride.
+Architectures (ARCHITECTURES, chosen by name with labelling.centres.architecture; checkpoints record theirs):
+
+  resnet18-full   ResNet-18 layers 1-3 at full resolution + light decoder (the first version; over the speed budget)
+  resnet18-half   the same with the stem at stride 2: about 4x faster, the map upsampled back to full size
+  resnet18-half-hr  resnet18-half plus a two-layer full-resolution branch before the head, for sub-pixel precision
+  resnet34-half-hr  deeper encoder (ResNet-34 layers 1-3), same layout
+  unet16 / unet32 / unet16-5  plain U-Nets at full resolution, widths 16-128, 32-256, or 16-256 over 5 levels
+
+Speed budget: learned tracking may cost at most 2x the classical pipeline (benchmarks/inference.py, tests/test_speed.py).
 """
 from __future__ import annotations
 
@@ -19,35 +24,98 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 _MODELS: dict[tuple, nn.Module] = {}
-STRIDE = 2                 # new models: encoder at half resolution (see Speed above)
+STRIDE = 2                 # SeedNet() default: encoder at half resolution
 CHUNK_PIXELS = 8 * 1024 * 1024 // 2   # frame pixels per forward pass at stride 1 (about 4 GB); twice that at stride 2
+
+
+def _up(x: torch.Tensor, like: torch.Tensor) -> torch.Tensor:
+    return F.interpolate(x, size=like.shape[-2:], mode="bilinear", align_corners=False)
+
+
+def _conv(i: int, o: int, k: int = 3) -> nn.Sequential:
+    return nn.Sequential(nn.Conv2d(i, o, k, padding=k // 2, bias=False), nn.BatchNorm2d(o), nn.ReLU(inplace=True))
 
 
 class SeedNet(nn.Module):
     """ResNet-18 layers 1-3 with a light decoder. The stem keeps full resolution (stride 1) or halves it (stride 2);
     either way the output is a full-size map. ResNet's own stem (stride 4) would leave a 15 px nucleus 4 px wide."""
 
-    def __init__(self, stride: int = STRIDE):
+    def __init__(self, stride: int = STRIDE, depth: int = 18, hires: int = 0):
         super().__init__()
-        from torchvision.models import resnet18
-        base = resnet18(weights=None)
-        self.stride = int(stride)
+        from torchvision.models import resnet18, resnet34
+        base = (resnet18 if depth == 18 else resnet34)(weights=None)
+        self.stride, self.depth, self.hires_width = int(stride), int(depth), int(hires)
+        self.arch = {"name": "resnet", "stride": self.stride, "depth": self.depth, "hires": self.hires_width}
         self.stem = nn.Sequential(nn.Conv2d(1, 64, 5, stride=self.stride, padding=2, bias=False), base.bn1, base.relu)
         self.enc1, self.enc2, self.enc3 = base.layer1, base.layer2, base.layer3
         self.up2 = nn.Sequential(nn.Conv2d(256 + 128, 64, 3, padding=1), nn.ReLU(inplace=True))
-        self.up1 = nn.Sequential(nn.Conv2d(64 + 64, 32, 3, padding=1), nn.ReLU(inplace=True), nn.Conv2d(32, 1, 1))
+        if hires:   # a shallow full-resolution branch joins the upsampled decoder before the head
+            self.up1 = nn.Sequential(nn.Conv2d(64 + 64, 32, 3, padding=1), nn.ReLU(inplace=True))
+            self.hires = nn.Sequential(_conv(1, hires, 5), _conv(hires, hires))
+            self.head = nn.Sequential(nn.Conv2d(32 + hires, 32, 3, padding=1), nn.ReLU(inplace=True), nn.Conv2d(32, 1, 1))
+        else:       # (layer names as in the first version, so its checkpoints still load)
+            self.up1 = nn.Sequential(nn.Conv2d(64 + 64, 32, 3, padding=1), nn.ReLU(inplace=True), nn.Conv2d(32, 1, 1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         s = self.enc1(self.stem(x))
         m = self.enc2(s)
         d = self.enc3(m)
-        d = F.interpolate(d, size=m.shape[-2:], mode="bilinear", align_corners=False)
-        u = self.up2(torch.cat([d, m], 1))
-        u = F.interpolate(u, size=s.shape[-2:], mode="bilinear", align_corners=False)
-        out = self.up1(torch.cat([u, s], 1))
-        if out.shape[-2:] != x.shape[-2:]:
-            out = F.interpolate(out, size=x.shape[-2:], mode="bilinear", align_corners=False)
-        return out
+        u = self.up2(torch.cat([_up(d, m), m], 1))
+        out = self.up1(torch.cat([_up(u, s), s], 1))
+        if self.hires_width:
+            return self.head(torch.cat([_up(out, x), self.hires(x)], 1))
+        return _up(out, x) if out.shape[-2:] != x.shape[-2:] else out
+
+
+class UNet(nn.Module):
+    """Plain U-Net at full resolution: two conv-BN-ReLU per level, max-pool down, bilinear up, skip concatenation.
+    Cheap at full resolution because the first level is narrow (16-32 channels, against ResNet's 64)."""
+
+    def __init__(self, widths=(16, 32, 64, 128)):
+        super().__init__()
+        widths = [int(w) for w in widths]
+        self.stride = 1
+        self.arch = {"name": "unet", "widths": widths}
+        self.down = nn.ModuleList()
+        c = 1
+        for w in widths:
+            self.down.append(nn.Sequential(_conv(c, w), _conv(w, w)))
+            c = w
+        self.ups = nn.ModuleList()
+        for w in reversed(widths[:-1]):
+            self.ups.append(nn.Sequential(_conv(c + w, w), _conv(w, w)))
+            c = w
+        self.head = nn.Conv2d(c, 1, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        skips = []
+        for i, block in enumerate(self.down):
+            x = block(x if i == 0 else F.max_pool2d(x, 2))
+            skips.append(x)
+        x = skips.pop()
+        for block in self.ups:
+            s = skips.pop()
+            x = block(torch.cat([_up(x, s), s], 1))
+        return self.head(x)
+
+
+ARCHITECTURES = {
+    "resnet18-full": {"name": "resnet", "stride": 1},
+    "resnet18-half": {"name": "resnet", "stride": 2},
+    "resnet18-half-hr": {"name": "resnet", "stride": 2, "hires": 24},
+    "resnet34-half-hr": {"name": "resnet", "stride": 2, "depth": 34, "hires": 24},
+    "unet16": {"name": "unet", "widths": [16, 32, 64, 128]},
+    "unet32": {"name": "unet", "widths": [32, 64, 128, 256]},
+    "unet16-5": {"name": "unet", "widths": [16, 32, 64, 128, 256]},
+}
+DEFAULT_ARCHITECTURE = "resnet18-half"
+
+
+def build(arch: str | dict | None = None) -> nn.Module:
+    """A network from a preset name (ARCHITECTURES) or a saved arch dict."""
+    spec = dict(ARCHITECTURES[arch or DEFAULT_ARCHITECTURE] if not isinstance(arch, dict) else arch)
+    name = spec.pop("name", "resnet")
+    return UNet(**spec) if name == "unet" else SeedNet(**spec)
 
 
 def normalize(nuclei: torch.Tensor) -> torch.Tensor:
@@ -79,14 +147,14 @@ def centre_map(points: torch.Tensor, shape: tuple, sigma: float) -> torch.Tensor
 
 
 def train(frames: torch.Tensor, points: torch.Tensor, sigma: float = 3.0, steps: int = 800, crop: int = 256,
-          batch: int = 12, lr: float = 2e-3, seed: int = 0, on_step=None, stride: int = STRIDE) -> SeedNet:
+          batch: int = 12, lr: float = 2e-3, seed: int = 0, on_step=None, arch: str | dict | None = None) -> nn.Module:
     """frames (T,1,X,Y) normalized; points (P,3) [t,x,y]. Returns a trained model.
 
     Sparse fields are mostly empty, so most crops are centred on a labelled nucleus.
     """
     device = frames.device
     torch.manual_seed(seed)
-    net = SeedNet(stride).to(device)
+    net = build(arch).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
     schedule = torch.optim.lr_scheduler.OneCycleLR(optimizer, lr, total_steps=steps)
     target = centre_map(points, frames.shape, sigma)
@@ -120,7 +188,7 @@ def train(frames: torch.Tensor, points: torch.Tensor, sigma: float = 3.0, steps:
 
 
 def train_patches(images: torch.Tensor, inside: torch.Tensor, points: torch.Tensor, sigma: float = 3.0, steps: int = 1500,
-                  crop: int = 128, batch: int = 16, lr: float = 2e-3, seed: int = 0, on_step=None, stride: int = STRIDE) -> SeedNet:
+                  crop: int = 128, batch: int = 16, lr: float = 2e-3, seed: int = 0, on_step=None, arch: str | dict | None = None) -> nn.Module:
     """Train on labelled patches. images (N,1,P,P) normalized (see `normalize`, taken over the whole frame);
     inside (N,1,P,P) bool, the box in which every nucleus centre was clicked; points (M,3) [patch, x, y].
 
@@ -128,7 +196,7 @@ def train_patches(images: torch.Tensor, inside: torch.Tensor, points: torch.Tens
     """
     device = images.device
     torch.manual_seed(seed)
-    net = SeedNet(stride).to(device)
+    net = build(arch).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
     schedule = torch.optim.lr_scheduler.OneCycleLR(optimizer, lr, total_steps=steps)
     target = centre_map(points, images.shape, sigma) if points.shape[0] else torch.zeros_like(images)
@@ -159,24 +227,24 @@ def train_patches(images: torch.Tensor, inside: torch.Tensor, points: torch.Tens
     return net.eval()
 
 
-def save_checkpoint(net: SeedNet, path: str) -> None:
-    torch.save({"arch": {"stride": net.stride}, "state": net.state_dict()}, path)
+def save_checkpoint(net: nn.Module, path: str) -> None:
+    torch.save({"arch": net.arch, "state": net.state_dict()}, path)
 
 
-def load_checkpoint(path: str, device) -> SeedNet:
+def load_checkpoint(path: str, device) -> nn.Module:
     import os
     key = (path, str(device), os.path.getmtime(path))  # a retrained file is read again
     if key not in _MODELS:
         saved = torch.load(path, map_location=device, weights_only=True)
         if "state" not in saved:                 # first-version files: a bare state dict, full-resolution encoder
             saved = {"arch": {"stride": 1}, "state": saved}
-        net = SeedNet(**saved["arch"])
+        net = build({"name": "resnet", **saved["arch"]})
         net.load_state_dict(saved["state"])
         _MODELS[key] = net.to(device).eval().to(memory_format=torch.channels_last)
     return _MODELS[key]
 
 
-def score_map(net: SeedNet, nuclei: torch.Tensor, chunk: int | None = None) -> torch.Tensor:
+def score_map(net: nn.Module, nuclei: torch.Tensor, chunk: int | None = None) -> torch.Tensor:
     """(T,1,X,Y) corrected nuclear channel -> (T,1,X,Y) centre score 0..1. Frames go through in chunks sized to
     keep memory bounded at any frame size; channels_last is about 20% faster on tensor cores."""
     x = normalize(nuclei)
