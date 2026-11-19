@@ -30,6 +30,8 @@ class ImageCanvas(QGraphicsView):
     pixel_clicked = Signal(float, float)  # (x = first array axis, y = second array axis)
     pixel_hovered = Signal(float, float)
     zoomed = Signal()
+    view_changed = Signal()                  # zoom or pan: a linked canvas follows with match_view
+    crosshair_moved = Signal(object)         # scene point under the mouse, or None when it leaves: show_cross mirrors it
 
     def __init__(self):
         super().__init__()
@@ -48,6 +50,21 @@ class ImageCanvas(QGraphicsView):
         self._cross = False
         self._cursor = None          # viewport position of the crosshair, None when the mouse is outside
         self._pan_from = None
+        self.horizontalScrollBar().valueChanged.connect(self.view_changed)
+        self.verticalScrollBar().valueChanged.connect(self.view_changed)
+
+    def match_view(self, other: "ImageCanvas") -> None:
+        """Same zoom and centre as `other` (both show images of the same size)."""
+        self._user_zoomed = other._user_zoomed
+        self.setTransform(other.transform())
+        self.centerOn(other.mapToScene(other.viewport().rect().center()))
+
+    def show_cross(self, scene_point) -> None:
+        """Draw the crosshair at a scene point another canvas reported (None hides it)."""
+        if self._press is not None:
+            return                               # the mouse is here: its own crosshair wins
+        self._cursor = None if scene_point is None else QPointF(self.mapFromScene(scene_point))
+        self.viewport().update()
 
     def set_crosshair(self, on: bool, colour: str = "#ffd166") -> None:
         """Draw a crosshair instead of the hand cursor; left drag still pans."""
@@ -79,6 +96,7 @@ class ImageCanvas(QGraphicsView):
     def leaveEvent(self, event) -> None:
         self._cursor = None
         self.viewport().update()
+        self.crosshair_moved.emit(None)
         super().leaveEvent(event)
 
     def set_texts(self, items: list[tuple[float, float, str, str]], size: int = 18) -> None:
@@ -120,6 +138,7 @@ class ImageCanvas(QGraphicsView):
 
     def reset_view(self) -> None:
         self.fitInView(self.scene().sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self.view_changed.emit()
 
     def set_paths(self, groups: list[tuple[list[tuple[float, float]], str, float]]) -> None:
         """groups: (points as (x, y) in array coordinates, colour, pen width)."""
@@ -150,6 +169,7 @@ class ImageCanvas(QGraphicsView):
         factor = 1.25 if event.angleDelta().y() > 0 else 0.8
         self.scale(factor, factor)
         self.zoomed.emit()
+        self.view_changed.emit()
 
     def mousePressEvent(self, event) -> None:
         self._press = event.position()
@@ -171,6 +191,7 @@ class ImageCanvas(QGraphicsView):
     def mouseMoveEvent(self, event) -> None:
         p: QPointF = self.mapToScene(event.position().toPoint())
         self.pixel_hovered.emit(p.y(), p.x())
+        self.crosshair_moved.emit(p)
         if self._cross:
             self._cursor = event.position()
             if self._press is not None and event.buttons() & Qt.MouseButton.LeftButton:

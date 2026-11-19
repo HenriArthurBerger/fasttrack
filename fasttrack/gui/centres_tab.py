@@ -3,9 +3,12 @@ labels the models disagree with.
 
 Label. A patch opens at a likely mistake or event, with tracking's centres on it. Click a centre to remove it,
 click a nucleus without one to add it. Keys 1-9 give the point under the crosshair a state (or add a point
-there with that state); points have the first state unless you change it. Every nucleus whose centre is
-inside the white box needs exactly one point; the margin is context. Left/Right flip through the frames
-before and after (7 each way by default) to tell an odd-shaped nucleus from two, a division from debris.
+there with that state); a point has no state until you give it one (0 or the same number again clears it),
+so an ambiguous cell is still a centre but never a state example. Every nucleus whose centre is inside the
+white box needs exactly one point; the margin is context. Left/Right flip through the frames before and
+after (7 each way by default; going past the last one loads 7 more) to tell an odd-shaped nucleus from two,
+a division from debris. The reference view on the right shows another channel (or the frame-to-frame change,
+or the seed finder's scores) of the same frame, zoomed, panned and crosshaired with the labelling view.
 
 Dataset. Every labelled patch, or every labelled cell grouped by state. Double-click one to correct it.
 
@@ -23,8 +26,8 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from PySide6.QtCore import QPointF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                               QListView, QListWidget, QListWidgetItem, QPushButton, QScrollArea, QSpinBox, QSplitter, QTabWidget,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+                               QListView, QListWidget, QListWidgetItem, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from ..experiment import LABELLING_DEFAULTS
@@ -38,14 +41,51 @@ RADIUS = 4.0      # image px: the centre circle
 PEN = 3.0         # screen px: marker lines, drawn over a dark outline
 NEAR = 5.0        # px: a click this close to a point removes it
 STATE_NEAR = 8.0  # px: a number key gives its state to the point this close to the crosshair
+NO_STATE = ""     # centres.NONE: a centre with no state, which the state classifier does not train on
 
 
-def _scale(images: list[np.ndarray]) -> list[np.ndarray]:
-    """uint8, log scaled, one contrast for all (from the middle frame) so the frames compare."""
+def _norm(images: list[np.ndarray]) -> list[np.ndarray]:
+    """float32, log scaled so the middle frame's 1st-99.8th percentiles are 0-1; one contrast for all so the frames compare."""
     logs = [np.log2(np.maximum(a.astype(np.float32), 0) + 1) for a in images]
     mid = logs[len(logs) // 2]
     lo, hi = np.percentile(mid[mid > 0] if (mid > 0).any() else mid, [1, 99.8])   # the black padding off the image edge does not count
-    return [np.clip((a - lo) / (hi - lo + 1e-6) * 255, 0, 255).astype(np.uint8) for a in logs]
+    return [(a - lo) / (hi - lo + 1e-6) for a in logs]
+
+
+def _scale(images: list[np.ndarray]) -> list[np.ndarray]:
+    """uint8 for display, contrast as in _norm."""
+    return [_to_uint8(a) for a in _norm(images)]
+
+
+def _to_uint8(a: np.ndarray, black: float = 0.0, white: float = 1.0) -> np.ndarray:
+    return np.clip((a - black) / max(white - black, 1e-3) * 255, 0, 255).astype(np.uint8)
+
+
+class _SquarePair(QWidget):
+    """Two square views side by side (the right one may be hidden: then the left is centred alone)."""
+
+    def __init__(self, left: QWidget, right: QWidget, gap: int = 8):
+        super().__init__()
+        self.left, self.right, self.gap = left, right, gap
+        left.setParent(self)
+        right.setParent(self)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setMinimumSize(420, 220)
+
+    def relayout(self) -> None:
+        w, h, g = self.width(), self.height(), self.gap
+        if self.right.isHidden():
+            side = min(w, h)
+            self.left.setGeometry((w - side) // 2, 0, side, side)
+        else:
+            side = min((w - g) // 2, h)
+            x0 = (w - 2 * side - g) // 2
+            self.left.setGeometry(x0, 0, side, side)
+            self.right.setGeometry(x0 + side + g, 0, side, side)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.relayout()
 
 
 def _circle(x: float, y: float, r: float) -> list[tuple[float, float]]:
@@ -87,6 +127,12 @@ def _thumb(gray: np.ndarray, side: int, box=None, points=(), border: str | None 
         p.drawRect(1, 1, pix.width() - 2, pix.height() - 2)
     p.end()
     return pix
+
+
+def centres_cut(frame: np.ndarray, obs: dict, margin: int) -> np.ndarray:
+    """The patch's box plus margin from a full frame, black off the image edge."""
+    from ..centres import cut
+    return cut(frame, obs["x0"], obs["y0"], obs["size"], margin, "constant")
 
 
 class _Thumb(QLabel):
@@ -133,8 +179,9 @@ class CentresTab(QWidget):
         self.review: dict | None = None
         self.review_items: list[dict] = []
         self.thumb_cache: dict = {}
-        self.view_channel: int | None = None   # loaded-channel index shown; None = the nuclear channel
-        self.channel_grays: dict = {}          # channel -> scaled cuts of the open patch
+        self.ref_kinds: dict = {}              # reference menu text -> ("channel", i) | ("change",) | ("scores",) | None
+        self.ref_cache: dict = {}              # kind -> float frames of the open patch
+        self._syncing = False
 
         root = QHBoxLayout(self)
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -156,8 +203,8 @@ class CentresTab(QWidget):
         self._shortcut(QKeySequence(Qt.Key.Key_Left), lambda: self.view_frame(self.view_dt - 1))
         self._shortcut(QKeySequence(Qt.Key.Key_Right), lambda: self.view_frame(self.view_dt + 1))
         self._shortcut(QKeySequence(Qt.Key.Key_Up), lambda: self.view_frame(0))
-        self._shortcut(QKeySequence(Qt.Key.Key_C), self.cycle_channel)
-        for n in range(1, 10):
+        self._shortcut(QKeySequence(Qt.Key.Key_C), self.cycle_reference)
+        for n in range(0, 10):
             self._shortcut(QKeySequence(str(n)), lambda n=n: self.state_key(n))
 
     def _shortcut(self, seq, fn) -> None:
@@ -186,9 +233,9 @@ class CentresTab(QWidget):
         self.margin.setToolTip("Context shown around the box. Nuclei centred there are not labelled.")
         form.addRow("Margin (px)", self.margin)
         self.context = QSpinBox()
-        self.context.setRange(3, 15)
-        self.context.setToolTip("Frames shown before and after the labelled one (Left/Right flips through them). Seeing a nucleus "
-                                "over time tells an odd angle from two nuclei, and a division from debris.")
+        self.context.setRange(3, 60)
+        self.context.setToolTip("Frames shown before and after the labelled one (Left/Right flips through them; going past the "
+                                "last loads 7 more). Seeing a nucleus over time tells an odd angle from two nuclei, and a division from debris.")
         form.addRow("Frames before and after", self.context)
         col.addWidget(box)
 
@@ -317,19 +364,43 @@ class CentresTab(QWidget):
         self.info.setWordWrap(True)
         top.addWidget(self.info, 1)
         ml.addLayout(top)
-        self.channel_row = QHBoxLayout()
-        self.channel_row.addWidget(QLabel("Show channel (C):"))
-        self.channel_group = QButtonGroup(self)
-        self.channel_group.setExclusive(True)
-        self.channel_group.idClicked.connect(self.show_channel)
-        self.channel_row.addStretch()
-        ml.addLayout(self.channel_row)
+        ref = QHBoxLayout()
+        ref.addWidget(QLabel("Reference view (C):"))
+        self.ref_combo = QComboBox()
+        self.ref_combo.setMinimumWidth(220)
+        self.ref_combo.setToolTip("Shown on the right, same frame, zoom and crosshair as the labelling view. View only: labels "
+                                  "and models use the nuclear channel. Change = this frame minus the one before (bright: appeared).")
+        self.ref_combo.currentTextChanged.connect(self._reference_changed)
+        ref.addWidget(self.ref_combo)
+        ref.addSpacing(16)
+        self.ref_black, self.ref_white = QSlider(Qt.Orientation.Horizontal), QSlider(Qt.Orientation.Horizontal)
+        for name, slider, lo, hi, val in (("Black", self.ref_black, -50, 95, 0), ("White", self.ref_white, 5, 300, 100)):
+            slider.setRange(lo, hi)
+            slider.setValue(val)
+            slider.setFixedWidth(150)
+            slider.setToolTip("Exposure of the reference view, in % of its automatic range.")
+            slider.valueChanged.connect(self._redraw_reference)
+            ref.addWidget(QLabel(name))
+            ref.addWidget(slider)
+        auto = QPushButton("Auto")
+        auto.setToolTip("Automatic exposure again.")
+        auto.clicked.connect(lambda: (self.ref_black.setValue(0), self.ref_white.setValue(100)))
+        ref.addWidget(auto)
+        ref.addStretch()
+        ml.addLayout(ref)
         self.canvas = ImageCanvas()
-        self.canvas.setMinimumSize(420, 420)
         self.canvas.set_crosshair(True, "#00f0ff")   # cyan: unlike every marker colour
         self.canvas.pixel_clicked.connect(self._clicked)
         self.canvas.pixel_hovered.connect(lambda x, y: setattr(self, "hover", (x, y)))
-        ml.addWidget(self.canvas, 1)
+        self.ref_canvas = ImageCanvas()
+        self.ref_canvas.set_crosshair(True, "#00f0ff")
+        self.ref_canvas.pixel_hovered.connect(lambda x, y: setattr(self, "hover", (x, y)))   # number keys work over either view
+        self.ref_canvas.hide()
+        for a, b in ((self.canvas, self.ref_canvas), (self.ref_canvas, self.canvas)):
+            a.crosshair_moved.connect(b.show_cross)
+            a.view_changed.connect(lambda a=a, b=b: self._sync_view(a, b))
+        self.views = _SquarePair(self.canvas, self.ref_canvas)
+        ml.addWidget(self.views, 1)
         self.film_host = QWidget()
         self.film = QHBoxLayout(self.film_host)
         self.film.setContentsMargins(0, 0, 0, 0)
@@ -347,6 +418,7 @@ class CentresTab(QWidget):
         ml.addWidget(self.legend)
         nav = QHBoxLayout()
         for text, slot in (("Save and next (Enter)", self.save), ("Skip (Space)", self.skip), ("Back (Backspace)", self.back),
+                           ("More frames (±7)", self.more_frames),
                            ("Undo (Ctrl+Z)", self.undo_click), ("Clear box", self.clear_points), ("Reset to tracking", self.reset_points)):
             b = QPushButton(text)
             b.clicked.connect(slot)
@@ -544,17 +616,10 @@ class CentresTab(QWidget):
     def _open(self, obs: dict, frames: list[np.ndarray], points: list | None, states: list | None) -> None:
         from .. import centres, dataset
         self.current = obs
-        self._raw = frames
         m = int(self.c["margin"])
-        cuts = [centres.cut(f, obs["x0"], obs["y0"], obs["size"], m, "constant") for f in frames]
-        self.k = len(cuts) // 2
-        self.grays = _scale(cuts)
-        self.nuclear_grays = self.grays
-        self.channel_grays = {}
-        self._channel_buttons()
         self.tracked = self.sampler.tracked_points(obs)
         self.wide = {**obs, "x0": obs["x0"] - m, "y0": obs["y0"] - m, "size": obs["size"] + 2 * m}
-        self.tracked_at = {dt: self.sampler.tracked_points(self.wide, obs["t"] + dt) for dt in range(-self.k, self.k + 1)}
+        self._set_frames(frames)
         inside = {tuple(p) for p in self.tracked}
         self.context_pts = [p for p in self.tracked_at[0] if tuple(p) not in inside]
         default = dataset.default_state(self._exp())
@@ -562,10 +627,8 @@ class CentresTab(QWidget):
         self.states = list(states) if states is not None else [default] * len(self.points)
         self.undo = []
         self.view_dt = 0
-        self.canvas._user_zoomed = False
-        if self.view_channel is not None and not self._load_channel(self.view_channel):
-            self.view_channel = None
-            self._channel_buttons()
+        self.canvas._user_zoomed = self.ref_canvas._user_zoomed = False
+        self._reference_menu()
         self._film()
         self._redraw()
         self.canvas.setFocus()  # so Enter, Space and Backspace label instead of typing into a settings field
@@ -584,66 +647,128 @@ class CentresTab(QWidget):
         self.info.setText(text)
         self._show_counts()
 
-    def _channel_names(self) -> list[tuple[int, str, bool]]:
-        """(index into the loaded channels, name, is nuclear) for every loaded channel."""
+    def _set_frames(self, frames: list[np.ndarray]) -> None:
+        """The open patch's frames t-k .. t+k (full frames, nuclear channel): its cuts, and tracking's centres in each."""
+        obs, m = self.current, int(self.c["margin"])
+        self._raw = frames
+        self.k = len(frames) // 2
+        self.grays = _scale([centres_cut(f, obs, m) for f in frames])
+        self.tracked_at = {dt: self.sampler.tracked_points(self.wide, obs["t"] + dt) for dt in range(-self.k, self.k + 1)}
+        self.ref_cache = {}
+
+    def more_frames(self, step: int = 7) -> None:
+        """Load `step` more frames each way for the open patch (for cells that hardly move)."""
+        if self.current is None or self.reader is None:
+            return
+        k = self.k + step
+        try:
+            frames = self.reader.frames(self.current["position"], list(range(self.current["t"] - k, self.current["t"] + k + 1)))
+        except (KeyError, OSError, ValueError) as exc:
+            self.info.setText(f"Could not read more frames: {exc}")
+            return
+        self._set_frames(frames)
+        self._film()
+        self._redraw()
+
+    # ------------------------------------------------------------------ reference view
+    def _reference_menu(self) -> None:
+        """Fill the reference menu for this experiment, keeping the choice; the first time, pick the first other channel."""
         from ..experiment import loaded_channels
-        nuclear = self.reader.channel if self.reader is not None else 0
-        return [(i, c["name"], i == nuclear) for i, c in enumerate(loaded_channels(self._exp()))]
+        exp = self._exp()
+        nuclear = self.reader.channel
+        kinds = {"None": None}
+        for i, c in enumerate(loaded_channels(exp)):
+            kinds[c["name"] + (" (nuclear)" if i == nuclear else "")] = ("channel", i)
+        kinds["Change since previous frame"] = ("change",)
+        from pathlib import Path
+        if Path(exp["paths"]["results"], self.c["model_file"]).exists():
+            kinds["Seed finder scores"] = ("scores",)
+        if list(kinds) != list(self.ref_kinds):
+            current = self.ref_combo.currentText()
+            self.ref_kinds = kinds
+            self.ref_combo.blockSignals(True)
+            self.ref_combo.clear()
+            self.ref_combo.addItems(list(kinds))
+            others = [t for t, k in kinds.items() if k and k[0] == "channel" and k[1] != nuclear]
+            self.ref_combo.setCurrentText(current if current in kinds else (others[0] if others else "None"))
+            self.ref_combo.blockSignals(False)
 
-    def _channel_buttons(self) -> None:
-        """One checkable button per loaded channel above the canvas; rebuilt only when the channels change."""
-        names = self._channel_names()
-        if [b.text() for b in self.channel_group.buttons()] != [n + (" (nuclear)" if nuc else "") for _, n, nuc in names]:
-            for b in self.channel_group.buttons():
-                self.channel_group.removeButton(b)
-                b.setParent(None)
-                b.deleteLater()
-            for i, name, nuc in names:
-                b = QPushButton(name + (" (nuclear)" if nuc else ""))
-                b.setCheckable(True)
-                b.setToolTip("View only: labels and models still use the nuclear channel.")
-                self.channel_group.addButton(b, i)
-                self.channel_row.insertWidget(self.channel_row.count() - 1, b)
-        shown = self.view_channel if self.view_channel is not None else (self.reader.channel if self.reader else 0)
-        b = self.channel_group.button(shown)
-        if b is not None:
-            b.setChecked(True)
+    def _reference_changed(self, _text: str = "") -> None:
+        self._redraw_reference()
+        self.canvas.setFocus()
 
-    def _load_channel(self, channel: int) -> bool:
-        """Point self.grays at `channel` for the open patch, reading its frames the first time."""
-        from .. import centres
-        if self.reader is None or self.current is None:
-            return False
-        if channel == self.reader.channel:
-            self.grays = self.nuclear_grays
-            return True
-        if channel not in self.channel_grays:
+    def cycle_reference(self) -> None:
+        n = self.ref_combo.count()
+        if n:
+            self.ref_combo.setCurrentIndex((self.ref_combo.currentIndex() + 1) % n)
+
+    def _reference_frames(self) -> list[np.ndarray] | None:
+        """Float frames (about 0-1) of the chosen reference for the open patch, read or computed the first time."""
+        kind = self.ref_kinds.get(self.ref_combo.currentText())
+        if kind is None or self.current is None:
+            return None
+        if kind not in self.ref_cache:
             obs, m = self.current, int(self.c["margin"])
             try:
-                frames = self.reader.frames(obs["position"], self._frame_range(obs["t"]), channel)
-            except (IndexError, KeyError, OSError, ValueError) as exc:
-                self.info.setText(f"Could not read that channel: {exc}")
-                return False
-            self.channel_grays[channel] = _scale([centres.cut(f, obs["x0"], obs["y0"], obs["size"], m, "constant") for f in frames])
-        self.grays = self.channel_grays[channel]
-        return True
+                if kind[0] == "channel":
+                    frames = self._raw if kind[1] == self.reader.channel else \
+                        self.reader.frames(obs["position"], list(range(obs["t"] - self.k, obs["t"] + self.k + 1)), kind[1])
+                    out = _norm([centres_cut(f, obs, m) for f in frames])
+                elif kind[0] == "change":
+                    logs = [np.log2(np.maximum(centres_cut(f, obs, m).astype(np.float32), 0) + 1) for f in self._raw]
+                    d = [np.zeros_like(logs[0])] + [b - a for a, b in zip(logs, logs[1:])]
+                    spread = float(np.percentile(np.abs(np.stack(d)), 99.5)) + 1e-6
+                    out = [0.5 + x / (2 * spread) for x in d]        # grey = no change, bright = appeared, dark = gone
+                else:
+                    out = [centres_cut(f, obs, m) for f in self._scores()]
+            except (IndexError, KeyError, OSError, ValueError, RuntimeError) as exc:
+                self.info.setText(f"Could not show {self.ref_combo.currentText()}: {exc}")
+                return None
+            self.ref_cache[kind] = out
+        return self.ref_cache[kind]
 
-    def show_channel(self, channel: int) -> None:
-        """Show another channel in the large view and the film strip. Points and states are unchanged."""
-        if self.current is None:
-            return
-        if self._load_channel(channel):
-            self.view_channel = None if channel == self.reader.channel else channel
-            self._film()
-            self._redraw()
-        self._channel_buttons()
+    def _scores(self) -> list[np.ndarray]:
+        """The seed finder's centre scores (0-1) on the open patch's full frames, as tracking computes them."""
+        import torch
+        from pathlib import Path
+        from ..track import background, centroid_net
+        cfg = self.reader.cfg
+        net = centroid_net.load_checkpoint(str(Path(self._exp()["paths"]["results"], self.c["model_file"])), cfg["device"])
+        out = []
+        for s in range(0, len(self._raw), 8):
+            x = torch.from_numpy(np.stack(self._raw[s:s + 8]).astype(np.float32))[:, None].to(cfg["device"])
+            corrected, _ = background.correct_background(x, cfg)
+            out += list(centroid_net.score_map(net, corrected)[:, 0].cpu().numpy())
+        return out
 
-    def cycle_channel(self) -> None:
-        names = [i for i, _, _ in self._channel_names()]
-        if self.current is None or len(names) < 2:
+    def _redraw_reference(self, *_args) -> None:
+        frames = self._reference_frames() if self.current is not None else None
+        if (frames is None) != self.ref_canvas.isHidden():
+            self.ref_canvas.setHidden(frames is None)
+            self.views.relayout()
+        for w in (self.ref_black, self.ref_white):
+            w.setEnabled(frames is not None)
+        if frames is None:
             return
-        shown = self.view_channel if self.view_channel is not None else self.reader.channel
-        self.show_channel(names[(names.index(shown) + 1) % len(names)] if shown in names else names[0])
+        obs, m = self.current, int(self.c["margin"])
+        s, ox, oy = obs["size"], obs["x0"] - m, obs["y0"] - m
+        self.ref_canvas.set_image(_to_uint8(frames[self.k + self.view_dt], self.ref_black.value() / 100, self.ref_white.value() / 100))
+        groups = _marked([(m - .5, m - .5), (m - .5, m + s - .5), (m + s - .5, m + s - .5), (m + s - .5, m - .5), (m - .5, m - .5)], BOX, 1.0)
+        pts = self.points if self.view_dt == 0 else self.tracked_at[self.view_dt]
+        for x, y in pts:                              # thin: the reference signal stays visible under them
+            groups.append((_circle(x - ox, y - oy, RADIUS), CONTEXT, 1.0))
+        self.ref_canvas.set_paths(groups)
+        self.ref_canvas.set_texts([(m + 2, m + 2, f"{self.ref_combo.currentText()}, frame {obs['t'] + self.view_dt}", BOX)], 13)
+        self._sync_view(self.canvas, self.ref_canvas)
+
+    def _sync_view(self, a: ImageCanvas, b: ImageCanvas) -> None:
+        if self._syncing or b.isHidden() or self.current is None:
+            return
+        self._syncing = True
+        try:
+            b.match_view(a)
+        finally:
+            self._syncing = False
 
     def _film(self) -> None:
         while self.film.count():
@@ -654,7 +779,7 @@ class CentresTab(QWidget):
                 w.deleteLater()
         m, s = int(self.c["margin"]), self.current["size"]
         n = 2 * self.k + 1
-        side = max(56, min(130, (max(self.canvas.width(), 600) - 4 * n) // n))
+        side = max(56, min(130, (max(self.views.width(), 600) - 4 * n) // n))
         self.film_scroll.setFixedHeight(side + 40)   # thumbnails, their frame numbers, and room for a scroll bar
         self.thumbs = []
         for i, dt in enumerate(range(-self.k, self.k + 1)):
@@ -672,11 +797,17 @@ class CentresTab(QWidget):
             lay.addWidget(title)
             self.film.addWidget(cell)
             self.thumbs.append((thumb, i, pts, side))
+            if dt == self.view_dt:
+                selected = cell
+        self.film_host.adjustSize()
+        self.film_scroll.ensureWidgetVisible(selected, 60, 0)
 
     def view_frame(self, dt: int) -> None:
         """Show frame t + dt in the large view. Only the labelled frame (dt = 0) can be edited."""
         if self.current is None:
             return
+        if abs(dt) > self.k:
+            self.more_frames()                          # past the last frame: load more instead of stopping
         dt = int(np.clip(dt, -self.k, self.k))
         if dt == self.view_dt:
             return
@@ -684,6 +815,8 @@ class CentresTab(QWidget):
         m, s = int(self.c["margin"]), self.current["size"]
         for thumb, i, pts, side in self.thumbs:
             thumb.setPixmap(_thumb(self.grays[i], side, (m, s), pts, "#d33" if thumb.index == dt else None))
+            if thumb.index == dt:
+                self.film_scroll.ensureWidgetVisible(thumb, 60, 0)
         self._redraw()
 
     def _legend(self) -> None:
@@ -692,8 +825,9 @@ class CentresTab(QWidget):
         states = " ".join(chip(STATE_COLOURS[i % len(STATE_COLOURS)], f"{i + 1} {c}") for i, c in enumerate(cats[:9]))
         self.legend.setText(f"{chip(KEPT, '○')} found by tracking   {chip(ADDED, '○')} added by you   "
                             f"{chip(BOX, '□')} label every nucleus centred inside.   Click a circle to remove it, a nucleus to add "
-                            f"one. States: press the number over a circle: {states}. The number is shown next to the circle; "
-                            f"no number = {cats[0] if cats else 'default'}.   ←/→ flip frames, ↑ back to the labelled frame. Wheel zooms, drag pans.")
+                            f"one. States: press the number over a circle: {states}; the number shows next to it. No number = no state "
+                            f"(a centre, but not a state example): the same number again or 0 clears it.   ←/→ flip frames (past the end "
+                            f"loads more), ↑ back to the labelled frame. Wheel zooms, drag pans.")
 
     def _state_colour(self, state: str) -> str:
         cats = self.lab["categories"]
@@ -708,7 +842,6 @@ class CentresTab(QWidget):
         self.canvas.set_image(self.grays[self.k + self.view_dt])
         groups = _marked([(m - .5, m - .5), (m - .5, m + s - .5), (m + s - .5, m + s - .5), (m + s - .5, m - .5), (m - .5, m - .5)], BOX, 1.5)
         texts = []
-        default = self.lab["categories"][0] if self.lab["categories"] else ""
         if self.view_dt == 0:
             tracked = {(round(a, 1), round(b, 1)) for a, b in self.tracked}
             cats = self.lab["categories"]
@@ -717,7 +850,7 @@ class CentresTab(QWidget):
             for (x, y), st in zip(self.points, self.states):
                 colour = KEPT if (round(x, 1), round(y, 1)) in tracked else ADDED
                 groups += _marked(_circle(x - ox, y - oy, RADIUS), colour)
-                if st != default:
+                if st:
                     label = str(cats.index(st) + 1) if st in cats else st[:4]
                     texts.append((x - ox - RADIUS - 5, y - oy + RADIUS - 1, label, self._state_colour(st)))   # just right of the circle
             if self.overlay and self.overlay.get("model_points"):
@@ -737,6 +870,7 @@ class CentresTab(QWidget):
             texts.append((m + 2, m + 2, f"frame {obs['t'] + self.view_dt} ({self.view_dt:+d}): view only, ↑ to edit", BOX))
         self.canvas.set_paths(groups)
         self.canvas.set_texts(texts)
+        self._redraw_reference()
 
     # ------------------------------------------------------------------ editing
     def _to_image(self, px: float, py: float) -> tuple[float, float]:
@@ -770,27 +904,29 @@ class CentresTab(QWidget):
             return  # outside the box: context only
         self._push()
         self.points.append([round(x, 1), round(y, 1)])
-        self.states.append(self.lab["categories"][0] if self.lab["categories"] else "")
+        self.states.append(NO_STATE)
         self._redraw()
 
     def state_key(self, n: int) -> None:
-        """Key n: the point under the crosshair gets state n; with no point there, one is added with that state."""
+        """Key n: the point under the crosshair gets state n (pressed again, or 0: no state); with no point there,
+        one is added with that state."""
         cats = self.lab["categories"]
         if self.current is None or n > len(cats) or self.hover is None:
             return
         if self.view_dt != 0:
             self.view_frame(0)
             return
+        state = cats[n - 1] if n else NO_STATE
         x, y = self._to_image(*self.hover)
         d = [math.hypot(x - a, y - b) for a, b in self.points]
         if d and min(d) <= STATE_NEAR:
             i = int(np.argmin(d))
             self._push()
-            self.states[i] = cats[n - 1]
+            self.states[i] = NO_STATE if self.states[i] == state else state
         elif self._inside(x, y):
             self._push()
             self.points.append([round(x, 1), round(y, 1)])
-            self.states.append(cats[n - 1])
+            self.states.append(state)
         else:
             return
         self._redraw()
@@ -810,7 +946,7 @@ class CentresTab(QWidget):
         if self.current is not None:
             self._push()
             self.points = copy.deepcopy(self.tracked)
-            self.states = [self.lab["categories"][0] if self.lab["categories"] else ""] * len(self.points)
+            self.states = [NO_STATE] * len(self.points)
             self._redraw()
 
     def save(self) -> None:
@@ -860,7 +996,7 @@ class CentresTab(QWidget):
     def _show_counts(self) -> None:
         from .. import dataset
         s = dataset.summary(self._exp(), self.rows)
-        states = ", ".join(f"{c} {n}" for c, n in s["categories"].items())
+        states = ", ".join(f"{c} {n}" for c, n in s["categories"].items()) + f", no state {s['no_state']}"
         self.counts.setText(f"{s['patches']} patches, {s['points']} centres (you added {s['added']}, removed {s['removed']}); "
                             f"states: {states}   (aim for 100+ patches, 30+ cells of each state)")
 
@@ -877,7 +1013,7 @@ class CentresTab(QWidget):
         r = self.rows[index]
         obs = {"position": r["position"], "t": int(r["t"]), "x0": int(r["x0"]), "y0": int(r["y0"]), "size": int(r["size"]),
                "source": r["source"], "change": r.get("change", 0.0), "cx": int(r["x0"]) + int(r["size"]) // 2, "cy": int(r["y0"]) + int(r["size"]) // 2}
-        default = self.lab["categories"][0] if self.lab["categories"] else ""
+        default = NO_STATE
         states = centres.point_states(r, default)
         points = copy.deepcopy(r["points"])
         try:

@@ -45,6 +45,7 @@ from .track.measure import S
 
 SOURCES = ["count_change", "random", "track_end", "track_start", "division"]
 LEGACY_STATES = {"division": "mitosis"}   # states renamed since: read as the new name
+NONE = ""                                  # a point's state when none was given: a centre, but no example for the state classifier
 EVENT_SOURCES = ("track_end", "track_start", "division")
 SOURCE_TEXT = {"count_change": "a local change in cell count", "random": "a random cell",
                "track_end": "a track that ends (the cell in the centre)", "track_start": "a track that starts (the cell in the centre)",
@@ -301,11 +302,10 @@ def patch_key(r: dict) -> tuple:
 
 def add_label(exp: dict, rows: list[dict], obs: dict, points: list, tracked: list, states: list | None = None) -> list[dict]:
     """Save one patch (replacing an earlier label of the same box). states: one category per point; missing or
-    empty means the default (first) category. A state-only row (an earlier event label) is replaced too when the
+    empty means none (NONE): the point counts as a centre but not as a state example. A state-only row (an earlier event label) is replaced too when the
     new patch has a point within 6 px of its cell: the cell is now labelled in full."""
-    default = exp["labelling"]["categories"][0] if exp["labelling"]["categories"] else ""
     states = list(states or [])
-    states = [str(states[i]) if i < len(states) and states[i] else default for i in range(len(points))]
+    states = [str(states[i]) if i < len(states) and states[i] else NONE for i in range(len(points))]
     pts = [[round(float(a), 1), round(float(b), 1)] for a, b in points]
 
     def absorbed(r):
@@ -320,8 +320,8 @@ def add_label(exp: dict, rows: list[dict], obs: dict, points: list, tracked: lis
     return rows
 
 
-def point_states(row: dict, default: str) -> list[str]:
-    """One state per point of a patch; older files without states get the default."""
+def point_states(row: dict, default: str = NONE) -> list[str]:
+    """One state per point of a patch; points without one get `default` (none)."""
     s = [LEGACY_STATES.get(v, v) for v in row.get("states") or []]
     return [s[i] if i < len(s) and s[i] else default for i in range(len(row["points"]))]
 
@@ -331,7 +331,7 @@ def centre_rows(rows: list[dict]) -> list[dict]:
     return [r for r in rows if not r.get("state_only")]
 
 
-def label_summary(rows: list[dict], default: str = "neutral") -> dict:
+def label_summary(rows: list[dict], default: str = NONE) -> dict:
     """How much the labels changed what tracking found, and how many points have each state."""
     states: dict[str, int] = {}
     for r in rows:

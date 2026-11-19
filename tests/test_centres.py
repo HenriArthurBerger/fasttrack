@@ -121,7 +121,7 @@ def test_centres_tab_edits_and_saves(tmp_path, device):
     assert tab.points == [[obs["x0"] + 30.0, obs["y0"] + 31.0]]
     tab.save()
     saved = centres.read_labels({**exp, "labelling": tab.collect()})
-    assert len(saved) == 1 and saved[0]["points"] == [[obs["x0"] + 30.0, obs["y0"] + 31.0]] and saved[0]["states"] == ["neutral"]
+    assert len(saved) == 1 and saved[0]["points"] == [[obs["x0"] + 30.0, obs["y0"] + 31.0]] and saved[0]["states"] == [centres.NONE]
     tab.back()
     assert tab.current["t"] == obs["t"] and tab.points == [[obs["x0"] + 30.0, obs["y0"] + 31.0]]
     assert centres.read_labels({**exp, "labelling": tab.collect()}) == []

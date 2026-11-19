@@ -30,8 +30,8 @@ from .device import resolve as resolve_device
 
 # ---------------------------------------------------------------------- the dataset
 def default_state(exp: dict) -> str:
-    cats = exp["labelling"]["categories"]
-    return cats[0] if cats else ""
+    """A point's state until you give it one: none, so ambiguous cells are centres but not state examples."""
+    return centres.NONE
 
 
 def migrate_events(exp: dict, rows: list[dict]) -> tuple[list[dict], int]:
@@ -80,6 +80,7 @@ def cell_examples(exp: dict, rows: list[dict] | None = None) -> list[dict]:
 def summary(exp: dict, rows: list[dict]) -> dict:
     s = centres.label_summary(rows, default_state(exp))
     s["categories"] = {c: s["states"].get(c, 0) for c in exp["labelling"]["categories"]}
+    s["no_state"] = s["states"].get(centres.NONE, 0)
     return s
 
 

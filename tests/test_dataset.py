@@ -25,7 +25,7 @@ def tracked(tmp_path_factory, device):
 
 
 def _label(tmp, exp, n, seed=1):
-    """Draw n patches and label every centre from the synthetic truth; every third point is in mitosis."""
+    """Draw n patches and label every centre from the synthetic truth: every third point in mitosis, every third neutral, the rest no state."""
     reader = centres.NuclearReader(exp, None, 2)
     sampler = centres.Sampler(exp, reader.shape, seed=seed, available=reader.all())
     rows, sources = dataset.read_dataset(exp), set()
@@ -36,22 +36,22 @@ def _label(tmp, exp, n, seed=1):
         m = (truth["t"] == obs["t"]) & (truth["x"] >= obs["x0"]) & (truth["x"] < obs["x0"] + 64) \
             & (truth["y"] >= obs["y0"]) & (truth["y"] < obs["y0"] + 64)
         pts = np.stack([truth["x"][m], truth["y"][m]], 1).tolist()
-        states = ["mitosis" if (len(rows) + i) % 3 == 0 else "" for i in range(len(pts))]
+        states = ["mitosis" if (len(rows) + i) % 3 == 0 else "neutral" if (len(rows) + i) % 3 == 1 else "" for i in range(len(pts))]
         rows = centres.add_label(exp, rows, obs, pts, sampler.tracked_points(obs), states)
         sources.add(obs["source"])
     reader.close()
     return rows, sources
 
 
-def test_states_are_saved_with_points_and_old_files_get_the_default(tracked):
+def test_states_are_saved_with_points_and_old_files_get_none(tracked):
     tmp, exp = tracked
     rows, sources = _label(tmp, exp, 12)
     assert sources & set(centres.EVENT_SOURCES), sources          # event candidates are drawn as patches too
     saved = centres.read_labels(exp)
     assert all(len(r["states"]) == len(r["points"]) for r in saved)
-    assert all(s in ("neutral", "mitosis") for r in saved for s in r["states"])
+    assert all(s in ("neutral", "mitosis", centres.NONE) for r in saved for s in r["states"])
     old = {k: v for k, v in saved[0].items() if k != "states"}
-    assert centres.point_states(old, "neutral") == ["neutral"] * len(old["points"])
+    assert centres.point_states(old) == [centres.NONE] * len(old["points"])
     cells = dataset.cell_examples(exp, saved)
     assert len(cells) == sum(len(r["points"]) for r in saved)
     assert dataset.summary(exp, saved)["categories"]["mitosis"] > 0
@@ -89,10 +89,25 @@ def test_both_models_train_and_every_label_is_checked(tracked):
     rows = dataset.read_dataset(exp)
     assert not review["errors"], review["errors"]
     assert len(review["patches"]) == len(centres.centre_rows(rows)) and all(p is not None for p in review["patches"])
-    assert len(review["cells"]) == len(dataset.cell_examples(exp, rows))
+    stated = [c for c in dataset.cell_examples(exp, rows) if c["state"] in exp["labelling"]["categories"]]
+    assert len(review["cells"]) == len(stated)                     # cells with no state are not judged
     items = dataset.disagreements(review, rows)
     assert all(i["kind"] in ("centres", "state") for i in items)
     assert dataset.read_review(exp)["made"] == review["made"]
     # the state model classifies every candidate with crops at a fixed centre
     counts = events.classify_positions(exp)
     assert sum(counts.values()) > 0 and events.read_events(exp["paths"]["results"], "B02_xy1")
+
+
+def test_points_without_a_state_are_centres_but_not_state_examples(tracked):
+    tmp, exp = tracked
+    rows, _ = _label(tmp, exp, 3)
+    obs = {k: rows[0][k] for k in ("position", "t", "x0", "y0", "size", "source")}
+    pts = rows[0]["points"]
+    rows = centres.add_label(exp, rows, obs, pts, [], ["mitosis"] + [None] * (len(pts) - 1))
+    r = rows[-1]
+    assert r["states"][0] == "mitosis" and all(s == centres.NONE for s in r["states"][1:])
+    assert centres.point_states({"points": pts}) == [centres.NONE] * len(pts)   # older files without states: none
+    assert dataset.summary(exp, rows)["no_state"] >= len(pts) - 1
+    trained_on = [c for c in dataset.cell_examples(exp, rows) if c["state"] in exp["labelling"]["categories"]]
+    assert all(c["state"] for c in trained_on)
